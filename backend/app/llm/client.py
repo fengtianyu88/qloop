@@ -1,14 +1,18 @@
 """LLM API client.
 
-A thin async wrapper around OpenAI-compatible ``/chat/completions``
-endpoints, used by the review engine. The client is intentionally
-generic: it talks to any service that accepts the standard OpenAI request
-schema (``api_base`` + ``/chat/completions``) and returns the standard
-response schema.
+A thin async wrapper around two API protocols used by the review engine:
+
+* **OpenAI-compatible** (``/chat/completions``) — used by OpenAI, vLLM,
+  TGI, Ollama, 通义千问, DeepSeek, and most self-hosted gateways.
+* **Anthropic native** (``/v1/messages``) — used by Claude series models.
+
+The client is intentionally generic: it talks to any service that accepts
+one of the two standard request schemas and normalizes the result into a
+single :class:`LLMResponse`.
 
 Highlights:
     * :class:`LLMResponse` - normalized result of an LLM call.
-    * :func:`call_llm` - call a single model.
+    * :func:`call_llm` - call a single model (auto-dispatches by protocol).
     * :func:`call_llm_with_fallback` - call a primary model and fall back
       to a secondary model on failure.
     * :func:`parse_llm_review_result` - robustly extract the JSON review
@@ -26,7 +30,7 @@ from typing import Optional
 import httpx
 
 from app.config import settings
-from app.models.review import LLMModel
+from app.models.review import LLMModel, LLMProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -53,30 +57,14 @@ class LLMResponse:
 
 
 # ---------------------------------------------------------------------------
-# Core call
+# OpenAI-compatible call (/chat/completions)
 # ---------------------------------------------------------------------------
-async def call_llm(
+async def _call_openai(
     model: LLMModel,
     prompt: str,
-    timeout: Optional[int] = None,
+    timeout: int,
 ) -> LLMResponse:
-    """Call an OpenAI-compatible ``/chat/completions`` endpoint.
-
-    Args:
-        model: The :class:`LLMModel` configuration (api_base, api_key,
-            model_name).
-        prompt: The user prompt to send.
-        timeout: Optional request timeout in seconds. Defaults to
-            ``settings.LLM_TIMEOUT``.
-
-    Returns:
-        An :class:`LLMResponse`. On success ``content`` holds the model's
-        message text and ``model_used`` the model name; on failure
-        ``success`` is ``False`` and ``error`` describes the problem.
-    """
-    if timeout is None:
-        timeout = settings.LLM_TIMEOUT
-
+    """Call an OpenAI-compatible ``/chat/completions`` endpoint."""
     url = model.api_base.rstrip("/")
     if not url.endswith("/chat/completions"):
         url = f"{url}/chat/completions"
@@ -99,18 +87,18 @@ async def call_llm(
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, headers=headers, json=payload)
     except httpx.TimeoutException:
-        logger.warning("LLM call to %s timed out after %ss", url, timeout)
+        logger.warning("LLM (openai) call to %s timed out after %ss", url, timeout)
         return LLMResponse.failure(
             f"Request timed out after {timeout}s", model_used=model.model_name
         )
     except httpx.HTTPError as exc:
-        logger.warning("LLM call to %s failed: %s", url, exc)
+        logger.warning("LLM (openai) call to %s failed: %s", url, exc)
         return LLMResponse.failure(f"HTTP error: {exc}", model_used=model.model_name)
 
     if response.status_code >= 400:
         body = response.text[:500]
         logger.warning(
-            "LLM call to %s returned HTTP %s: %s",
+            "LLM (openai) call to %s returned HTTP %s: %s",
             url,
             response.status_code,
             body,
@@ -136,6 +124,133 @@ async def call_llm(
         )
 
     return LLMResponse.ok(content=content, model_used=model.model_name)
+
+
+# ---------------------------------------------------------------------------
+# Anthropic native call (/v1/messages)
+# ---------------------------------------------------------------------------
+async def _call_anthropic(
+    model: LLMModel,
+    prompt: str,
+    timeout: int,
+) -> LLMResponse:
+    """Call an Anthropic-native ``/v1/messages`` endpoint (Claude).
+
+    The Anthropic API differs from OpenAI in three key ways:
+        * URL path is ``/v1/messages`` instead of ``/chat/completions``.
+        * Auth header is ``x-api-key`` (+ ``anthropic-version``) instead of
+          ``Authorization: Bearer``.
+        * Response shape is ``content[0].text`` instead of
+          ``choices[0].message.content``; the system prompt is a top-level
+          ``system`` field rather than a chat message.
+    """
+    url = model.api_base.rstrip("/")
+    if not url.endswith("/v1/messages"):
+        # Allow api_base like "https://api.anthropic.com" or ".../v1"
+        if url.endswith("/v1"):
+            url = f"{url}/messages"
+        else:
+            url = f"{url}/v1/messages"
+
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": model.api_key,
+        "anthropic-version": "2023-06-01",
+    }
+    payload = {
+        "model": model.model_name,
+        "system": "你是一位严谨的软件评审专家助手，只输出JSON。",
+        "messages": [
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.3,
+        "max_tokens": 4096,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, headers=headers, json=payload)
+    except httpx.TimeoutException:
+        logger.warning("LLM (anthropic) call to %s timed out after %ss", url, timeout)
+        return LLMResponse.failure(
+            f"Request timed out after {timeout}s", model_used=model.model_name
+        )
+    except httpx.HTTPError as exc:
+        logger.warning("LLM (anthropic) call to %s failed: %s", url, exc)
+        return LLMResponse.failure(f"HTTP error: {exc}", model_used=model.model_name)
+
+    if response.status_code >= 400:
+        body = response.text[:500]
+        logger.warning(
+            "LLM (anthropic) call to %s returned HTTP %s: %s",
+            url,
+            response.status_code,
+            body,
+        )
+        return LLMResponse.failure(
+            f"HTTP {response.status_code}: {body}",
+            model_used=model.model_name,
+        )
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as exc:
+        return LLMResponse.failure(
+            f"Invalid JSON response: {exc}", model_used=model.model_name
+        )
+
+    # Anthropic response: {"content": [{"type": "text", "text": "..."}], ...}
+    try:
+        content_blocks = data["content"]
+        if not content_blocks:
+            raise KeyError("content is empty")
+        # Concatenate all text blocks (there may be multiple).
+        parts = [
+            block.get("text", "")
+            for block in content_blocks
+            if block.get("type") == "text"
+        ]
+        content = "".join(parts)
+        if not content:
+            raise KeyError("no text block found in content")
+    except (KeyError, IndexError, TypeError):
+        return LLMResponse.failure(
+            "Response missing content[].text",
+            model_used=model.model_name,
+        )
+
+    return LLMResponse.ok(content=content, model_used=model.model_name)
+
+
+# ---------------------------------------------------------------------------
+# Core call (dispatches by protocol)
+# ---------------------------------------------------------------------------
+async def call_llm(
+    model: LLMModel,
+    prompt: str,
+    timeout: Optional[int] = None,
+) -> LLMResponse:
+    """Call an LLM endpoint, dispatching by the model's configured protocol.
+
+    Args:
+        model: The :class:`LLMModel` configuration (protocol, api_base,
+            api_key, model_name).
+        prompt: The user prompt to send.
+        timeout: Optional request timeout in seconds. Defaults to
+            ``settings.LLM_TIMEOUT``.
+
+    Returns:
+        An :class:`LLMResponse`. On success ``content`` holds the model's
+        message text and ``model_used`` the model name; on failure
+        ``success`` is ``False`` and ``error`` describes the problem.
+    """
+    if timeout is None:
+        timeout = settings.LLM_TIMEOUT
+
+    if model.protocol == LLMProtocol.ANTHROPIC:
+        return await _call_anthropic(model, prompt, timeout)
+    # Default: OpenAI-compatible
+    return await _call_openai(model, prompt, timeout)
 
 
 # ---------------------------------------------------------------------------

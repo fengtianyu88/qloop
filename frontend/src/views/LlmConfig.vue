@@ -31,14 +31,20 @@ const modelFormRef = ref<FormInstance>()
 const modelSubmitting = ref(false)
 const modelForm = reactive<LLMModelCreate & { id?: string; is_active?: boolean }>({
   name: '',
+  protocol: 'openai',
   api_base: '',
   api_key: '',
   model_name: '',
   priority: 1,
   is_active: true,
 })
+const protocolOptions: { label: string; value: string }[] = [
+  { label: 'OpenAI 兼容 (/chat/completions)', value: 'openai' },
+  { label: 'Anthropic 原生 (/v1/messages)', value: 'anthropic' },
+]
 const modelRules: FormRules = {
   name: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
+  protocol: [{ required: true, message: '请选择接口协议', trigger: 'change' }],
   api_base: [{ required: true, message: '请输入 API 地址', trigger: 'blur' }],
   api_key: [{ required: true, message: '请输入 API Key', trigger: 'blur' }],
   model_name: [{ required: true, message: '请输入模型标识', trigger: 'blur' }],
@@ -68,6 +74,7 @@ function openModelCreate() {
   modelDialogMode.value = 'create'
   modelForm.id = undefined
   modelForm.name = ''
+  modelForm.protocol = 'openai'
   modelForm.api_base = ''
   modelForm.api_key = ''
   modelForm.model_name = ''
@@ -80,6 +87,7 @@ function openModelEdit(row: LLMModel) {
   modelDialogMode.value = 'edit'
   modelForm.id = row.id
   modelForm.name = row.name
+  modelForm.protocol = row.protocol
   modelForm.api_base = row.api_base
   modelForm.api_key = row.api_key
   modelForm.model_name = row.model_name
@@ -97,6 +105,7 @@ async function handleModelSubmit() {
       if (modelDialogMode.value === 'create') {
         await createModel({
           name: modelForm.name,
+          protocol: modelForm.protocol,
           api_base: modelForm.api_base,
           api_key: modelForm.api_key,
           model_name: modelForm.model_name,
@@ -107,6 +116,7 @@ async function handleModelSubmit() {
       } else {
         const payload: LLMModelUpdate = {
           name: modelForm.name,
+          protocol: modelForm.protocol,
           api_base: modelForm.api_base,
           api_key: modelForm.api_key,
           model_name: modelForm.model_name,
@@ -289,6 +299,13 @@ onMounted(async () => {
       </template>
       <el-table :data="models" v-loading="modelLoading" border stripe>
         <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+        <el-table-column label="协议" width="120" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.protocol === 'anthropic' ? 'warning' : 'primary'" size="small">
+              {{ row.protocol === 'anthropic' ? 'Anthropic' : 'OpenAI' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="api_base" label="API 地址" min-width="200" show-overflow-tooltip />
         <el-table-column prop="model_name" label="模型标识" width="160" show-overflow-tooltip />
         <el-table-column prop="priority" label="优先级" width="90" align="center" />
@@ -357,8 +374,21 @@ onMounted(async () => {
         <el-form-item label="名称" prop="name">
           <el-input v-model="modelForm.name" placeholder="模型显示名称" />
         </el-form-item>
+        <el-form-item label="接口协议" prop="protocol">
+          <el-select v-model="modelForm.protocol" style="width: 100%">
+            <el-option
+              v-for="opt in protocolOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="API 地址" prop="api_base">
-          <el-input v-model="modelForm.api_base" placeholder="https://api.example.com/v1" />
+          <el-input
+            v-model="modelForm.api_base"
+            :placeholder="modelForm.protocol === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.example.com/v1'"
+          />
         </el-form-item>
         <el-form-item label="API Key" prop="api_key">
           <el-input v-model="modelForm.api_key" show-password placeholder="sk-..." />

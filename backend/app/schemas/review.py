@@ -6,13 +6,14 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.review import ReviewResult, ReviewType
+from app.models.review import LLMProtocol, ReviewResult, ReviewType
 
 
 class LLMModelCreate(BaseModel):
     """Schema for creating an LLM model configuration."""
 
     name: str
+    protocol: LLMProtocol = LLMProtocol.OPENAI
     api_base: str
     api_key: str
     model_name: str
@@ -27,6 +28,7 @@ class LLMModelResponse(BaseModel):
 
     id: uuid.UUID
     name: str
+    protocol: LLMProtocol
     api_base: str
     api_key: str
     model_name: str

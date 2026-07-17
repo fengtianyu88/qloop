@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.dependencies import require_roles
-from app.models.review import LLMModel, ReviewRule, ReviewType
+from app.models.review import LLMModel, LLMProtocol, ReviewRule, ReviewType
 from app.models.user import SystemRole, User
 from app.schemas.review import (
     LLMModelCreate,
@@ -40,6 +40,7 @@ class LLMModelUpdate(BaseModel):
     """Schema for partially updating an LLM model."""
 
     name: Optional[str] = None
+    protocol: Optional[LLMProtocol] = None
     api_base: Optional[str] = None
     api_key: Optional[str] = None
     model_name: Optional[str] = None
@@ -90,6 +91,7 @@ async def create_llm_model(
     """Create a new LLM model configuration (SUPER_ADMIN only)."""
     model = LLMModel(
         name=payload.name,
+        protocol=payload.protocol,
         api_base=payload.api_base,
         api_key=payload.api_key,
         model_name=payload.model_name,

@@ -39,6 +39,19 @@ class ReviewResult(str, Enum):
     ERROR = "error"
 
 
+class LLMProtocol(str, Enum):
+    """API protocol supported by an LLM model.
+
+    * ``OPENAI`` - OpenAI-compatible ``/chat/completions`` endpoint
+      (also used by vLLM, TGI, Ollama, 通义千问, DeepSeek, etc.).
+    * ``ANTHROPIC`` - Anthropic native ``/v1/messages`` endpoint
+      (Claude series).
+    """
+
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+
+
 class LLMModel(Base):
     """Configuration for an LLM model used in reviews."""
 
@@ -48,6 +61,15 @@ class LLMModel(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    protocol: Mapped[LLMProtocol] = mapped_column(
+        SAEnum(
+            LLMProtocol,
+            name="llm_protocol",
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        default=LLMProtocol.OPENAI,
+        nullable=False,
+    )
     api_base: Mapped[str] = mapped_column(String(500), nullable=False)
     api_key: Mapped[str] = mapped_column(String(500), nullable=False)
     model_name: Mapped[str] = mapped_column(String(200), nullable=False)

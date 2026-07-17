@@ -207,6 +207,7 @@ export interface LLMReview {
 export interface LLMModel {
   id: string
   name: string
+  protocol: LLMProtocol
   api_base: string
   api_key: string
   model_name: string
@@ -215,9 +216,13 @@ export interface LLMModel {
   created_at: string
 }
 
+/** LLM API 协议 */
+export type LLMProtocol = 'openai' | 'anthropic'
+
 /** 创建/更新 LLM 模型 */
 export interface LLMModelCreate {
   name: string
+  protocol?: LLMProtocol
   api_base: string
   api_key: string
   model_name: string
@@ -227,6 +232,7 @@ export interface LLMModelCreate {
 
 export interface LLMModelUpdate {
   name?: string
+  protocol?: LLMProtocol
   api_base?: string
   api_key?: string
   model_name?: string
