@@ -116,7 +116,7 @@ def send_release_notification(
         f"下载链接（请在 {expiry_hours} 小时内下载，逾期失效）：\n"
         f"{download_link}\n\n"
         f"如链接已过期，请联系项目管理员重新生成。\n\n"
-        f"—— BMS SOX 算法软件交付管理系统"
+        f"—— {settings.APP_NAME}"
     )
 
     html_body = (
@@ -126,7 +126,7 @@ def send_release_notification(
         f"<p>下载链接（请在 <b>{expiry_hours} 小时</b>内下载，逾期失效）：</p>"
         f"<p><a href=\"{download_link}\">{download_link}</a></p>"
         f"<p style=\"color:#888;\">如链接已过期，请联系项目管理员重新生成。</p>"
-        f"<hr><p style=\"color:#888;font-size:12px;\">BMS SOX 算法软件交付管理系统</p>"
+        f"<hr><p style=\"color:#888;font-size:12px;\">{settings.APP_NAME}</p>"
     )
 
     subject = f"【版本释放通知】{project_name} - {version_number}"

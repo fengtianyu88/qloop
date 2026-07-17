@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import type { LoginRequest } from '@/types'
+import { APP_TITLE } from '@/config'
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -49,7 +50,7 @@ async function handleLogin() {
     <div class="login-card">
       <div class="login-header">
         <el-icon class="login-logo"><Cpu /></el-icon>
-        <h2 class="login-title">BMS SOX 算法软件交付管理系统</h2>
+        <h2 class="login-title">{{ APP_TITLE }}</h2>
         <p class="login-subtitle">请登录以继续</p>
       </div>
 
@@ -97,7 +98,7 @@ async function handleLogin() {
       </div>
 
       <div class="login-footer">
-        <span>BMS SOX Delivery Management System</span>
+        <span>{{ APP_TITLE }}</span>
       </div>
     </div>
   </div>

@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notification'
 import { roleLabel } from '@/utils/status'
 import type { Notification } from '@/types'
+import { APP_TITLE, APP_SHORT_NAME } from '@/config'
 
 const authStore = useAuthStore()
 const notificationStore = useNotificationStore()
@@ -95,7 +96,7 @@ onMounted(async () => {
     <el-aside width="220px" class="layout-aside">
       <div class="logo">
         <el-icon class="logo-icon"><Cpu /></el-icon>
-        <span class="logo-text">BMS SOX</span>
+        <span class="logo-text">{{ APP_SHORT_NAME }}</span>
       </div>
       <el-menu
         :default-active="activeMenu"
@@ -116,7 +117,7 @@ onMounted(async () => {
       <!-- 顶栏 -->
       <el-header class="layout-header">
         <div class="header-left">
-          <span class="header-title">BMS SOX 算法软件交付管理系统</span>
+          <span class="header-title">{{ APP_TITLE }}</span>
         </div>
         <div class="header-right">
           <!-- 通知 -->

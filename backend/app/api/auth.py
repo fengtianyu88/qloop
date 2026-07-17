@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.schemas.user import (
     ForgotPasswordRequest,
@@ -90,22 +91,22 @@ async def forgot_password(
         from app.tasks.email_tasks import send_email
 
         reset_link = f"http://localhost:5173/reset-password?token={reset_token}"
-        subject = "【BMS SOX】密码重置"
+        subject = f"【{settings.APP_SHORT_NAME}】密码重置"
         body = (
             f"{user.full_name}，您好：\n\n"
-            f"您正在重置 BMS SOX 交付管理系统的密码。\n\n"
+            f"您正在重置 {settings.APP_NAME} 的密码。\n\n"
             f"请点击以下链接重置密码（1小时内有效）：\n{reset_link}\n\n"
             f"如非本人操作，请忽略此邮件。\n\n"
-            f"BMS SOX 交付管理系统"
+            f"{settings.APP_NAME}"
         )
         html = (
             f"<html><body>"
             f"<h2>密码重置</h2>"
             f"<p>{user.full_name}，您好：</p>"
-            f"<p>您正在重置 BMS SOX 交付管理系统的密码。</p>"
+            f"<p>您正在重置 {settings.APP_NAME} 的密码。</p>"
             f'<p><a href="{reset_link}" style="padding:10px 20px;background:#409EFF;color:white;text-decoration:none;border-radius:4px;">点击重置密码</a></p>'
             f'<p style="color:#999;font-size:12px;">链接1小时内有效。如非本人操作，请忽略此邮件。</p>'
-            f"<hr><p style='color:#999;font-size:12px;'>BMS SOX 交付管理系统</p>"
+            f"<hr><p style='color:#999;font-size:12px;'>{settings.APP_NAME}</p>"
             f"</body></html>"
         )
         send_email.delay(user.email, subject, body, html)

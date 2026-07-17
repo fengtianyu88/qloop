@@ -1,4 +1,4 @@
-"""FastAPI application entry point for the BMS SOX Algorithm Software Delivery Management System."""
+"""FastAPI application entry point for the 项目开发测试管理系统."""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,9 +21,8 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         description=(
-            "Backend API for managing BMS SOX algorithm software delivery, "
-            "including project management, release pipeline, LLM-based code "
-            "review, and audit logging."
+            f"{settings.APP_NAME} 后端 API，覆盖项目管理、版本释放流程、"
+            f"LLM 评审与审计日志等能力。"
         ),
         version="1.0.0",
     )

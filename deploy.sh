@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# BMS SOX 算法软件交付管理系统 — Linux 一键部署脚本
+# 项目开发测试管理系统 — Linux 一键部署脚本
 # ----------------------------------------------------------------------------
 # 用法:
 #   1. 编辑本脚本顶部「配置区」, 按实际环境填写
@@ -19,6 +19,12 @@ set -euo pipefail
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║                          配 置 区 (请按需修改)                            ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
+
+# ---------- 应用名称 (网页标题 / 顶栏 / 登录页 / 邮件签名) ----------
+# 完整名称: 显示在浏览器标签、登录页大标题、顶栏、邮件正文
+APP_NAME="项目开发测试管理系统"
+# 简短名称: 显示在侧边栏 logo、邮件主题前缀 (建议 4-8 字)
+APP_SHORT_NAME="项目开发测试"
 
 # ---------- 安装路径 ----------
 INSTALL_DIR="/opt/bms-sox"                  # 项目部署根目录
@@ -268,11 +274,13 @@ generate_env() {
 
     cat > "$INSTALL_DIR/backend/.env" <<EOF
 # ═══════════════════════════════════════════════════
-# BMS SOX 后端配置 (由 deploy.sh 自动生成)
+# 项目开发测试管理系统 后端配置 (由 deploy.sh 自动生成)
 # 生成时间: $(date '+%Y-%m-%d %H:%M:%S')
 # ═══════════════════════════════════════════════════
 
 # 应用
+APP_NAME=$APP_NAME
+APP_SHORT_NAME=$APP_SHORT_NAME
 SECRET_KEY=$SECRET_KEY
 ACCESS_TOKEN_EXPIRE_MINUTES=$ACCESS_TOKEN_EXPIRE_MINUTES
 
@@ -374,8 +382,17 @@ build_frontend() {
     cd "$INSTALL_DIR/frontend"
     npm install --silent 2>/dev/null
 
+    # 通过环境变量向 Vite 注入应用名称 (构建期静态内联到产物中)
+    # 部署者在配置区修改 APP_NAME / APP_SHORT_NAME 即可同步更新网页标题
+    export VITE_APP_TITLE="$APP_NAME"
+    export VITE_APP_SHORT_NAME="$APP_SHORT_NAME"
+    log "前端标题注入: VITE_APP_TITLE='$APP_NAME', VITE_APP_SHORT_NAME='$APP_SHORT_NAME'"
+
     # 构建生产版本
-    sudo -u "$RUN_USER" bash -c "cd $INSTALL_DIR/frontend && npm run build" 2>/dev/null
+    sudo -u "$RUN_USER" \
+        VITE_APP_TITLE="$APP_NAME" \
+        VITE_APP_SHORT_NAME="$APP_SHORT_NAME" \
+        bash -c "cd $INSTALL_DIR/frontend && npm run build" 2>/dev/null
 
     # 复制到 Nginx 目录
     mkdir -p /var/www/bms-sox
@@ -438,7 +455,7 @@ create_systemd_services() {
 
     cat > /etc/systemd/system/bms-minio.service <<EOF
 [Unit]
-Description=BMS SOX MinIO Object Storage
+Description=$APP_SHORT_NAME MinIO Object Storage
 After=network.target
 
 [Service]
@@ -460,7 +477,7 @@ EOF
     # ---------- 后端 ----------
     cat > /etc/systemd/system/bms-backend.service <<EOF
 [Unit]
-Description=BMS SOX Backend API
+Description=$APP_SHORT_NAME Backend API
 After=network.target postgresql.service redis-server.service
 
 [Service]
@@ -480,7 +497,7 @@ EOF
     # ---------- Celery ----------
     cat > /etc/systemd/system/bms-celery.service <<EOF
 [Unit]
-Description=BMS SOX Celery Worker
+Description=$APP_SHORT_NAME Celery Worker
 After=network.target redis-server.service bms-backend.service
 
 [Service]
@@ -623,7 +640,7 @@ verify_deployment() {
 
 # 显示状态
 show_status() {
-    echo -e "${BLUE}════════════════ BMS SOX 服务状态 ══════════════════${NC}"
+    echo -e "${BLUE}════════════════ $APP_NAME 服务状态 ══════════════════${NC}"
     for svc in bms-minio bms-backend bms-celery nginx postgresql redis-server; do
         local state=$(systemctl is-active "$svc" 2>/dev/null || echo "未安装")
         if [[ "$state" == "active" ]]; then
@@ -645,7 +662,7 @@ show_logs() {
 # 显示帮助
 show_help() {
     cat <<EOF
-BMS SOX 算法软件交付管理系统 — 一键部署脚本
+$APP_NAME — 一键部署脚本
 
 用法: sudo ./deploy.sh [命令]
 
@@ -688,11 +705,12 @@ main() {
     require_root
 
     echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}  BMS SOX 算法软件交付管理系统 — 一键部署${NC}"
+    echo -e "${GREEN}  $APP_NAME — 一键部署${NC}"
     echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
 
     # 确认配置
+    info "应用名称: $APP_NAME (简短: $APP_SHORT_NAME)"
     info "部署目录: $INSTALL_DIR"
     info "数据库: $PG_DB_USER@localhost:$POSTGRES_PORT/$PG_DB_NAME"
     info "管理员: $ADMIN_USERNAME (首次登录后请改密)"

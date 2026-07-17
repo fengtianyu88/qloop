@@ -4,6 +4,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import Layout from '@/components/Layout.vue'
+import { APP_TITLE } from '@/config'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -109,7 +110,9 @@ router.beforeEach(async (to, _from, next) => {
 
   // 设置页面标题
   if (to.meta.title) {
-    document.title = `${to.meta.title} - BMS SOX 算法软件交付管理系统`
+    document.title = `${to.meta.title} - ${APP_TITLE}`
+  } else {
+    document.title = APP_TITLE
   }
 
   const requiresAuth = to.meta.requiresAuth !== false

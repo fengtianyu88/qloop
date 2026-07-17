@@ -43,7 +43,7 @@ class ReleaseStatus(str, Enum):
 
 
 class Project(Base):
-    """A BMS SOX algorithm delivery project."""
+    """A development & testing project."""
 
     __tablename__ = "projects"
 

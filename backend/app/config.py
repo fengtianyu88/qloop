@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     )
 
     # Application
-    APP_NAME: str = "BMS SOX Algorithm Software Delivery Management System"
+    APP_NAME: str = "项目开发测试管理系统"
+    # 简短名称 (用于侧边栏 logo / 邮件主题前缀), 不含「系统」二字
+    APP_SHORT_NAME: str = "项目开发测试"
     SECRET_KEY: str = "change-me-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
 
