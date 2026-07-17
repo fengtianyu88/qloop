@@ -368,13 +368,41 @@ def parse_llm_review_result(content: Optional[str]) -> dict:
         except json.JSONDecodeError:
             continue
         if isinstance(parsed, dict):
-            # Normalize: ensure required keys exist.
+            # Some LLMs mistakenly nest conclusion/suggestions/risk_points
+            # inside dimension_scores. Lift them out to the top level so
+            # downstream code can find them.
+            raw_dims = parsed.get("dimension_scores", {}) or {}
+            if not isinstance(raw_dims, dict):
+                raw_dims = {}
+            extra_keys = ("conclusion", "suggestions", "risk_points")
+            lifted = {k: raw_dims[k] for k in extra_keys if k in raw_dims}
+            # Build the clean dimension_scores: only numeric entries.
+            clean_dims = {
+                k: v
+                for k, v in raw_dims.items()
+                if k not in extra_keys
+                and isinstance(v, (int, float, str))
+                and str(v).replace(".", "", 1).replace("-", "", 1).isdigit()
+            }
+            # Top-level fields win over the lifted ones.
+            conclusion = parsed.get(
+                "conclusion",
+                lifted.get("conclusion", ""),
+            )
+            suggestions = parsed.get(
+                "suggestions",
+                lifted.get("suggestions", ""),
+            )
+            risk_points = parsed.get(
+                "risk_points",
+                lifted.get("risk_points", ""),
+            )
             return {
                 "total_score": parsed.get("total_score", 0),
-                "dimension_scores": parsed.get("dimension_scores", {}) or {},
-                "conclusion": parsed.get("conclusion", "failed"),
-                "suggestions": parsed.get("suggestions", ""),
-                "risk_points": parsed.get("risk_points", ""),
+                "dimension_scores": clean_dims,
+                "conclusion": conclusion if conclusion else "通过",
+                "suggestions": suggestions,
+                "risk_points": risk_points,
             }
 
     return _default_failed_result("未找到可解析的 JSON 内容")

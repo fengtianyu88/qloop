@@ -193,6 +193,12 @@ function openLink(link: string) {
   window.open(downloadUrl(link), '_blank')
 }
 
+// 下载单个交付物（代码包/测试报告/评审报告）：
+// 后端 GET /api/releases/{id}/download/{file_type} 会 302 重定向到 MinIO 预签名 URL
+function downloadArtifact(fileType: 'code_package' | 'test_report' | 'review_report') {
+  window.open(`/api/releases/${releaseId.value}/download/${fileType}`, '_blank')
+}
+
 function formatTime(t: string | null): string {
   if (!t) return '—'
   return t.replace('T', ' ').slice(0, 19)
@@ -452,13 +458,13 @@ onMounted(async () => {
               <el-button v-if="release.download_link" type="primary" @click="openLink(release.download_link)">
                 <el-icon><Download /></el-icon>下载交付包
               </el-button>
-              <el-button v-if="release.code_package_path" @click="openLink(release.code_package_path)">
+              <el-button v-if="release.code_package_path" @click="downloadArtifact('code_package')">
                 代码包
               </el-button>
-              <el-button v-if="release.test_report_path" @click="openLink(release.test_report_path)">
+              <el-button v-if="release.test_report_path" @click="downloadArtifact('test_report')">
                 测试报告
               </el-button>
-              <el-button v-if="release.review_report_path" @click="openLink(release.review_report_path)">
+              <el-button v-if="release.review_report_path" @click="downloadArtifact('review_report')">
                 评审报告
               </el-button>
               <span v-if="release.link_expiry" class="expiry-text">

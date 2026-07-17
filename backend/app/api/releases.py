@@ -12,6 +12,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +30,7 @@ from app.services.release_service import (
     upload_review_report,
     upload_test_report,
 )
+from app.storage.minio_client import minio_generate_presigned_url
 
 router = APIRouter(prefix="/api/releases", tags=["releases"])
 
@@ -243,3 +245,54 @@ async def confirm_release_endpoint(
     )
 
     return ReleaseResponse.model_validate(release)
+
+
+# Mapping from URL file_type segment to the Release column storing the
+# MinIO object name for that artifact.
+_FILE_TYPE_TO_FIELD = {
+    "code_package": "code_package_path",
+    "test_report": "test_report_path",
+    "review_report": "review_report_path",
+}
+
+
+@router.get("/{release_id}/download/{file_type}")
+async def download_release_artifact(
+    release_id: uuid.UUID,
+    file_type: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Redirect to a freshly-generated MinIO presigned URL for an artifact.
+
+    file_type must be one of: code_package, test_report, review_report.
+    The URL is short-lived (1 hour) to avoid leaking long-lived links.
+    """
+    if file_type not in _FILE_TYPE_TO_FIELD:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file_type: {file_type}",
+        )
+
+    release = await _get_release_with_project_access(
+        db=db, release_id=release_id, user=current_user
+    )
+
+    object_name = getattr(release, _FILE_TYPE_TO_FIELD[file_type])
+    if not object_name:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{file_type} not uploaded for this release",
+        )
+
+    try:
+        presigned_url = minio_generate_presigned_url(
+            object_name=object_name, expiry_hours=1
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate download URL: {exc}",
+        )
+
+    return RedirectResponse(url=presigned_url, status_code=status.HTTP_302_FOUND)

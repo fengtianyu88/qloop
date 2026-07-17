@@ -273,6 +273,9 @@ generate_env() {
     local redis_url="redis://localhost:$REDIS_PORT/0"
     [[ -n "$REDIS_PASSWORD" ]] && redis_url="redis://:${REDIS_PASSWORD}@localhost:${REDIS_PORT}/0"
 
+    # URL-encode special chars in DB password (e.g. @ -> %40)
+    local PG_DB_PASSWORD_URL="${PG_DB_PASSWORD//@/%40}"
+
     cat > "$INSTALL_DIR/backend/.env" <<EOF
 # ═══════════════════════════════════════════════════
 # qloop 后端配置 (由 deploy.sh 自动生成)
@@ -286,7 +289,7 @@ SECRET_KEY=$SECRET_KEY
 ACCESS_TOKEN_EXPIRE_MINUTES=$ACCESS_TOKEN_EXPIRE_MINUTES
 
 # PostgreSQL
-DATABASE_URL=postgresql+asyncpg://$PG_DB_USER:$PG_DB_PASSWORD@localhost:$POSTGRES_PORT/$PG_DB_NAME
+DATABASE_URL=postgresql+asyncpg://$PG_DB_USER:$PG_DB_PASSWORD_URL@localhost:$POSTGRES_PORT/$PG_DB_NAME
 
 # Redis
 REDIS_URL=$redis_url
@@ -382,6 +385,8 @@ build_frontend() {
 
     cd "$INSTALL_DIR/frontend"
     npm install --silent 2>/dev/null
+    # 修复权限: npm install 以 root 运行, 但 build 以 RUN_USER 运行
+    chown -R "$RUN_USER:$RUN_GROUP" "$INSTALL_DIR/frontend"
 
     # 通过环境变量向 Vite 注入应用名称 (构建期静态内联到产物中)
     # 部署者在配置区修改 APP_NAME / APP_SHORT_NAME 即可同步更新网页标题

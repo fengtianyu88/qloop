@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { searchProjects, searchReleases } from '@/api/search'
+import { getUsers } from '@/api/users'
 import {
   statusLabel,
   statusTagType,
@@ -11,9 +12,13 @@ import type {
   ReleaseListItem,
   ReleaseSearchParams,
   ReleaseStatus,
+  User,
 } from '@/types'
 
 const router = useRouter()
+
+// 用户字典：用于将 pm_user_id 解析为用户名
+const userMap = ref<Record<string, User>>({})
 
 // 视图切换：release / project
 const viewMode = ref<'release' | 'project'>('release')
@@ -161,8 +166,26 @@ function handleViewChange() {
   }
 }
 
+// 解析用户名为空时回退到 ID 前 8 位
+function userName(id: string | null | undefined): string {
+  if (!id) return '—'
+  return userMap.value[id]?.full_name || userMap.value[id]?.username || id.slice(0, 8) + '…'
+}
+
+async function loadUsers() {
+  try {
+    const res = await getUsers({ page: 1, page_size: 100 })
+    const map: Record<string, User> = {}
+    res.items.forEach((u) => { map[u.id] = u })
+    userMap.value = map
+  } catch {
+    // 非管理员无法获取用户列表，回退到 ID 显示
+  }
+}
+
 onMounted(() => {
   loadReleases()
+  loadUsers()
 })
 </script>
 
@@ -271,8 +294,8 @@ onMounted(() => {
           </el-table-column>
           <el-table-column label="项目经理" width="160">
             <template #default="{ row }">
-              <el-tooltip :content="row.pm_user_id" placement="top">
-                <span>{{ row.pm_user_id ? row.pm_user_id.slice(0, 8) + '…' : '—' }}</span>
+              <el-tooltip :content="row.pm_user_id" placement="top" :disabled="!row.pm_user_id">
+                <span>{{ userName(row.pm_user_id) }}</span>
               </el-tooltip>
             </template>
           </el-table-column>

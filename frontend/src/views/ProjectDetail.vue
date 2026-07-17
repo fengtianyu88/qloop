@@ -31,7 +31,9 @@ const userList = ref<User[]>([])
 const versions = ref<Version[]>([])
 
 // 是否为当前项目的 PM
-const isPm = computed(() => project.value?.pm_user_id === authStore.user?.id)
+const isPm = computed(
+  () => project.value?.pm_user_id === authStore.user?.id || authStore.isAdmin,
+)
 
 function userName(id: string | null | undefined): string {
   if (!id) return '—'
@@ -52,7 +54,7 @@ async function loadProject() {
 async function loadUsers() {
   // 仅 admin / super_admin 可获取用户列表；失败则降级使用项目成员 ID
   try {
-    const res = await getUsers({ page: 1, page_size: 200 })
+    const res = await getUsers({ page: 1, page_size: 100 })
     userList.value = res.items
     const map: Record<string, User> = {}
     res.items.forEach((u) => {
