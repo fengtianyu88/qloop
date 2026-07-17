@@ -7,10 +7,13 @@
  *
  * 部署脚本 (deploy.sh) 会在 `npm run build` 前导出这两个变量,
  * Vite 在构建期把值静态内联到产物中。未设置时使用默认值。
+ *
+ * 品牌名 "qloop" = Quality + Loop, 寓意质量与闭环融合,
+ * 测试在开发中不断循环、完善、不留漏洞。
  */
 
 /** 完整应用名称 (用于浏览器标题、登录页大标题、顶栏标题) */
-export const APP_TITLE: string = import.meta.env.VITE_APP_TITLE || '项目开发测试管理系统'
+export const APP_TITLE: string = import.meta.env.VITE_APP_TITLE || 'qloop'
 
 /** 简短名称 (用于侧边栏 logo、邮件主题前缀) */
-export const APP_SHORT_NAME: string = import.meta.env.VITE_APP_SHORT_NAME || '项目开发测试'
+export const APP_SHORT_NAME: string = import.meta.env.VITE_APP_SHORT_NAME || 'qloop'

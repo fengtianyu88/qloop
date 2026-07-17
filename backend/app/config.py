@@ -15,9 +15,10 @@ class Settings(BaseSettings):
     )
 
     # Application
-    APP_NAME: str = "项目开发测试管理系统"
-    # 简短名称 (用于侧边栏 logo / 邮件主题前缀), 不含「系统」二字
-    APP_SHORT_NAME: str = "项目开发测试"
+    APP_NAME: str = "qloop"
+    # 简短名称 (用于侧边栏 logo / 邮件主题前缀)
+    # "qloop" = Quality + Loop, 寓意质量与闭环融合, 测试在开发中不断循环完善
+    APP_SHORT_NAME: str = "qloop"
     SECRET_KEY: str = "change-me-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
 

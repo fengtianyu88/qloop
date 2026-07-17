@@ -1,4 +1,4 @@
-"""FastAPI application entry point for the 项目开发测试管理系统."""
+"""FastAPI application entry point for qloop."""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,8 +21,8 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         description=(
-            f"{settings.APP_NAME} 后端 API，覆盖项目管理、版本释放流程、"
-            f"LLM 评审与审计日志等能力。"
+            f"{settings.APP_NAME} 后端 API — 质量闭环 · 测试驱动开发。"
+            f"覆盖项目管理、版本释放流程、LLM 评审与审计日志等能力。"
         ),
         version="1.0.0",
     )
