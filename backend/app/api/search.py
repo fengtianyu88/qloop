@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, selectinload
 
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -183,7 +183,7 @@ async def search_projects(
 
     Guests can only see projects that have at least one released release.
     """
-    query = select(Project).where(Project.is_active == True)  # noqa: E712
+    query = select(Project).options(selectinload(Project.members)).where(Project.is_active == True)  # noqa: E712
 
     if name:
         query = query.where(Project.name.ilike(f"%{name}%"))

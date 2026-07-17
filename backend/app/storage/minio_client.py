@@ -30,8 +30,17 @@ def _ensure_bucket_exists() -> None:
         ) from exc
 
 
-# Ensure bucket exists at import time
-_ensure_bucket_exists()
+# Bucket is ensured lazily on first upload so that the application can
+# start even when the MinIO backend is temporarily unavailable.
+_bucket_ready: bool = False
+
+
+def _ensure_bucket_lazy() -> None:
+    """Lazily ensure the bucket exists on first actual use."""
+    global _bucket_ready
+    if not _bucket_ready:
+        _ensure_bucket_exists()
+        _bucket_ready = True
 
 
 def minio_upload_file(
@@ -51,6 +60,7 @@ def minio_upload_file(
     Returns:
         The object name that was uploaded.
     """
+    _ensure_bucket_lazy()
     data_stream = io.BytesIO(data)
     minio_client.put_object(
         bucket_name=settings.MINIO_BUCKET,

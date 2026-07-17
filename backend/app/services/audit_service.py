@@ -9,6 +9,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 
 
+def _json_safe(obj: Any) -> Any:
+    """Recursively convert non-JSON-serializable values (e.g. UUID) to strings.
+
+    The ``details`` column is a PostgreSQL JSON column; passing UUID objects
+    (as produced by Pydantic schemas) raises ``TypeError: Object of type UUID
+    is not JSON serializable`` during the INSERT bind.
+    """
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    return obj
+
+
 async def create_audit_log(
     db: AsyncSession,
     user_id: Optional[uuid.UUID],
@@ -37,7 +53,7 @@ async def create_audit_log(
         action=action,
         resource_type=resource_type,
         resource_id=str(resource_id) if resource_id is not None else None,
-        details=details,
+        details=_json_safe(details) if details is not None else None,
         ip_address=ip_address,
     )
     db.add(audit_log)

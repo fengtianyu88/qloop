@@ -48,8 +48,14 @@ async def create_project(
     )
     db.add(member)
     await db.commit()
-    await db.refresh(project)
-    return project
+    # Re-fetch with members eagerly loaded to avoid async lazy-load errors
+    # when serializing the response (ProjectResponse includes members).
+    result = await db.execute(
+        select(Project)
+        .options(selectinload(Project.members))
+        .where(Project.id == project.id)
+    )
+    return result.scalar_one()
 
 
 async def get_project_by_id(
