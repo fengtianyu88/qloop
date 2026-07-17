@@ -104,4 +104,6 @@ qloop/
 
 ## 许可证
 
-内部使用，版权所有。
+本项目基于 [MIT License](LICENSE) 开源，允许任何用途（含商用），仅需保留版权声明。
+
+Copyright (c) 2026 fengtianyu88
