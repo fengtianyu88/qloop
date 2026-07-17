@@ -1,4 +1,4 @@
-# BMS SOX 算法软件交付管理系统 — 部署指南
+# qloop — 部署指南
 
 > 版本：1.0.0  日期：2026-07-16
 
@@ -100,7 +100,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES=480
 # ═══════════════════════════════════════════════════
 
 # 格式: postgresql+asyncpg://用户名:密码@主机:端口/数据库名
-DATABASE_URL=postgresql+asyncpg://bms:YourPassword123@localhost:5432/bms_sox
+DATABASE_URL=postgresql+asyncpg://qloop:YourPassword123@localhost:5432/qloop
 
 # ═══════════════════════════════════════════════════
 # Redis
@@ -123,7 +123,7 @@ MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=YourMinioSecretKey
 
 # 存储桶名称（不存在会自动创建）
-MINIO_BUCKET=bms-sox
+MINIO_BUCKET=qloop
 
 # 是否启用 HTTPS（内网通常为 false）
 MINIO_SECURE=false
@@ -145,7 +145,7 @@ SMTP_USER=
 SMTP_PASSWORD=
 
 # 发件人邮箱地址
-SMTP_FROM=bms-sox@your-company.com
+SMTP_FROM=qloop@your-company.com
 
 # ═══════════════════════════════════════════════════
 # LLM 大模型（在系统页面中配置，此处仅设超时）
@@ -182,18 +182,18 @@ server: {
 | 配置项 | 位置 | 必填 | 示例值 | 说明 |
 |--------|------|:----:|--------|------|
 | `SECRET_KEY` | .env | 是 | `a1b2c3...` | JWT 密钥，必须修改 |
-| `DATABASE_URL` | .env | 是 | `postgresql+asyncpg://bms:pwd@host:5432/bms_sox` | 数据库连接串 |
+| `DATABASE_URL` | .env | 是 | `postgresql+asyncpg://qloop:pwd@host:5432/qloop` | 数据库连接串 |
 | `REDIS_URL` | .env | 是 | `redis://:pwd@host:6379/0` | Redis 连接串 |
 | `MINIO_ENDPOINT` | .env | 是 | `host:9000` | MinIO 地址 |
 | `MINIO_ACCESS_KEY` | .env | 是 | `minioadmin` | MinIO 访问密钥 |
 | `MINIO_SECRET_KEY` | .env | 是 | `minioadmin` | MinIO 秘密密钥 |
-| `MINIO_BUCKET` | .env | 否 | `bms-sox` | 存储桶名 |
+| `MINIO_BUCKET` | .env | 否 | `qloop` | 存储桶名 |
 | `MINIO_SECURE` | .env | 否 | `false` | 是否 HTTPS |
 | `SMTP_HOST` | .env | 是 | `smtp.company.com` | SMTP 服务器 |
 | `SMTP_PORT` | .env | 是 | `25` | SMTP 端口 |
 | `SMTP_USER` | .env | 否 | `sender@company.com` | SMTP 用户名 |
 | `SMTP_PASSWORD` | .env | 否 | `password` | SMTP 密码 |
-| `SMTP_FROM` | .env | 是 | `bms-sox@company.com` | 发件人地址 |
+| `SMTP_FROM` | .env | 是 | `qloop@company.com` | 发件人地址 |
 | `LLM_TIMEOUT` | .env | 否 | `300` | LLM 超时秒数 |
 | LLM API 地址 | 系统页面 | 是 | `http://llm-host:8080/v1` | 超管在LLM配置页填写 |
 | LLM API Key | 系统页面 | 是 | `sk-xxx` | 超管在LLM配置页填写 |
@@ -267,11 +267,11 @@ sudo systemctl start postgresql
 
 # 创建数据库和用户
 sudo -u postgres psql <<'EOF'
-CREATE USER bms WITH PASSWORD 'YourPassword123';
-CREATE DATABASE bms_sox OWNER bms;
-GRANT ALL PRIVILEGES ON DATABASE bms_sox TO bms;
-\c bms_sox
-GRANT ALL ON SCHEMA public TO bms;
+CREATE USER qloop WITH PASSWORD 'YourPassword123';
+CREATE DATABASE qloop OWNER qloop;
+GRANT ALL PRIVILEGES ON DATABASE qloop TO qloop;
+\c qloop
+GRANT ALL ON SCHEMA public TO qloop;
 EOF
 ```
 
@@ -292,8 +292,8 @@ sudo systemctl start redis-server
 
 ```bash
 # 解压项目
-unzip bms-sox-delivery-system.zip -d /opt/bms-sox
-cd /opt/bms-sox/backend
+unzip qloop-delivery-system.zip -d /opt/qloop
+cd /opt/qloop/backend
 
 # 创建 Python 虚拟环境
 python3.12 -m venv venv
@@ -348,66 +348,66 @@ asyncio.run(create_admin())
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 # 生产环境用 systemd 管理
-sudo tee /etc/systemd/system/bms-backend.service > /dev/null <<'EOF'
+sudo tee /etc/systemd/system/qloop-backend.service > /dev/null <<'EOF'
 [Unit]
-Description=BMS SOX Backend API
+Description=qloop Backend API
 After=network.target postgresql.service redis-server.service
 
 [Service]
 Type=simple
 User=www-data
-WorkingDirectory=/opt/bms-sox/backend
-ExecStart=/opt/bms-sox/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+WorkingDirectory=/opt/qloop/backend
+ExecStart=/opt/qloop/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 Restart=always
 RestartSec=5
-EnvironmentFile=/opt/bms-sox/backend/.env
+EnvironmentFile=/opt/qloop/backend/.env
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable bms-backend
-sudo systemctl start bms-backend
+sudo systemctl enable qloop-backend
+sudo systemctl start qloop-backend
 ```
 
 ### 4.6 启动 Celery Worker
 
 ```bash
-cd /opt/bms-sox/backend
+cd /opt/qloop/backend
 source venv/bin/activate
 
 # 前台启动（测试用）
 celery -A app.tasks.celery_app worker --loglevel=info
 
 # 生产环境用 systemd 管理
-sudo tee /etc/systemd/system/bms-celery.service > /dev/null <<'EOF'
+sudo tee /etc/systemd/system/qloop-celery.service > /dev/null <<'EOF'
 [Unit]
-Description=BMS SOX Celery Worker
-After=network.target redis-server.service bms-backend.service
+Description=qloop Celery Worker
+After=network.target redis-server.service qloop-backend.service
 
 [Service]
 Type=simple
 User=www-data
-WorkingDirectory=/opt/bms-sox/backend
-ExecStart=/opt/bms-sox/backend/venv/bin/celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+WorkingDirectory=/opt/qloop/backend
+ExecStart=/opt/qloop/backend/venv/bin/celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
 Restart=always
 RestartSec=5
-EnvironmentFile=/opt/bms-sox/backend/.env
+EnvironmentFile=/opt/qloop/backend/.env
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable bms-celery
-sudo systemctl start bms-celery
+sudo systemctl enable qloop-celery
+sudo systemctl start qloop-celery
 ```
 
 ### 4.7 构建并部署前端
 
 ```bash
-cd /opt/bms-sox/frontend
+cd /opt/qloop/frontend
 
 # 安装依赖
 npm install
@@ -416,8 +416,8 @@ npm install
 npm run build
 
 # 将构建产物复制到 Web 目录
-sudo mkdir -p /var/www/bms-sox
-sudo cp -r dist/* /var/www/bms-sox/
+sudo mkdir -p /var/www/qloop
+sudo cp -r dist/* /var/www/qloop/
 ```
 
 ### 4.8 启动 SMTP 邮件服务
@@ -435,7 +435,7 @@ sudo apt install -y postfix
 ```bash
 # 检查后端
 curl http://localhost:8000/api/health
-# 预期: {"status":"healthy","app":"BMS SOX ...","version":"1.0.0"}
+# 预期: {"status":"healthy","app":"qloop ...","version":"1.0.0"}
 
 # 检查 Redis
 redis-cli ping
@@ -476,11 +476,11 @@ psql -U postgres
 ```
 
 ```sql
-CREATE USER bms WITH PASSWORD 'YourPassword123';
-CREATE DATABASE bms_sox OWNER bms;
-GRANT ALL PRIVILEGES ON DATABASE bms_sox TO bms;
-\c bms_sox
-GRANT ALL ON SCHEMA public TO bms;
+CREATE USER qloop WITH PASSWORD 'YourPassword123';
+CREATE DATABASE qloop OWNER qloop;
+GRANT ALL PRIVILEGES ON DATABASE qloop TO qloop;
+\c qloop
+GRANT ALL ON SCHEMA public TO qloop;
 \q
 ```
 
@@ -527,8 +527,8 @@ nssm start MinIO
 
 ```powershell
 # 解压项目
-Expand-Archive bms-sox-delivery-system.zip -DestinationPath C:\bms-sox
-cd C:\bms-sox\backend
+Expand-Archive qloop-delivery-system.zip -DestinationPath C:\qloop
+cd C:\qloop\backend
 
 # 创建 Python 虚拟环境
 python -m venv venv
@@ -585,25 +585,25 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 **注册为 Windows 服务（使用 NSSM）：**
 ```powershell
 # 下载 NSSM: https://nssm.cc/
-nssm install BMS-Backend "C:\bms-sox\backend\venv\Scripts\uvicorn.exe" "app.main:app" "--host" "0.0.0.0" "--port" "8000"
-nssm set BMS-Backend AppDirectory "C:\bms-sox\backend"
-nssm set BMS-Backend AppEnvironmentExtra PYTHONUNBUFFERED=1
-nssm start BMS-Backend
+nssm install qloop-Backend "C:\qloop\backend\venv\Scripts\uvicorn.exe" "app.main:app" "--host" "0.0.0.0" "--port" "8000"
+nssm set qloop-Backend AppDirectory "C:\qloop\backend"
+nssm set qloop-Backend AppEnvironmentExtra PYTHONUNBUFFERED=1
+nssm start qloop-Backend
 ```
 
 ### 5.6 启动 Celery Worker
 
 ```powershell
-cd C:\bms-sox\backend
+cd C:\qloop\backend
 .\venv\Scripts\Activate.ps1
 
 # 前台启动
 celery -A app.tasks.celery_app worker --loglevel=info --pool=solo
 
 # 注册为 Windows 服务
-nssm install BMS-Celery "C:\bms-sox\backend\venv\Scripts\celery.exe" "-A" "app.tasks.celery_app" "worker" "--loglevel=info" "--pool=solo"
-nssm set BMS-Celery AppDirectory "C:\bms-sox\backend"
-nssm start BMS-Celery
+nssm install qloop-Celery "C:\qloop\backend\venv\Scripts\celery.exe" "-A" "app.tasks.celery_app" "worker" "--loglevel=info" "--pool=solo"
+nssm set qloop-Celery AppDirectory "C:\qloop\backend"
+nssm start qloop-Celery
 ```
 
 > **注意**：Windows 上 Celery 必须使用 `--pool=solo` 参数，因为 Windows 不支持 Celery 的默认 prefork 进程池。
@@ -611,7 +611,7 @@ nssm start BMS-Celery
 ### 5.7 构建并部署前端
 
 ```powershell
-cd C:\bms-sox\frontend
+cd C:\qloop\frontend
 
 # 安装依赖
 npm install
@@ -650,7 +650,7 @@ sudo apt install -y nginx
 
 ### 6.2 配置 Nginx
 
-**Linux** 编辑 `/etc/nginx/sites-available/bms-sox`：
+**Linux** 编辑 `/etc/nginx/sites-available/qloop`：
 ```nginx
 server {
     listen 80;
@@ -658,7 +658,7 @@ server {
 
     # 前端静态文件
     location / {
-        root /var/www/bms-sox;
+        root /var/www/qloop;
         index index.html;
         try_files $uri $uri/ /index.html;
     }
@@ -679,7 +679,7 @@ server {
 ```
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/bms-sox /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/qloop /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -691,7 +691,7 @@ server {
     server_name localhost;
 
     location / {
-        root C:/bms-sox/frontend/dist;
+        root C:/qloop/frontend/dist;
         index index.html;
         try_files $uri $uri/ /index.html;
     }

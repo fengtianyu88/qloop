@@ -2,8 +2,8 @@
 
 This module is responsible for unpacking a submitted code package (a ZIP
 archive) and extracting a structured summary that can be fed to the LLM
-review engine. It supports a variety of file types commonly found in BMS
-SOX algorithm delivery packages:
+review engine. It supports a variety of file types commonly found in
+algorithm delivery packages:
 
 * C source/header files (``.c`` / ``.h``)
 * Python files (``.py``)

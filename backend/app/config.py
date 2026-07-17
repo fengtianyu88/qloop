@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = (
-        "postgresql+asyncpg://bms:bms@localhost:5432/bms_sox"
+        "postgresql+asyncpg://qloop:qloop@localhost:5432/qloop"
     )
 
     # Redis
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
-    MINIO_BUCKET: str = "bms-sox"
+    MINIO_BUCKET: str = "qloop"
     MINIO_SECURE: bool = False
 
     # SMTP / Email
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 25
     SMTP_USER: Optional[str] = None
     SMTP_PASSWORD: Optional[str] = None
-    SMTP_FROM: str = "noreply@bms-sox.local"
+    SMTP_FROM: str = "noreply@qloop.local"
 
     # LLM
     LLM_TIMEOUT: int = 300

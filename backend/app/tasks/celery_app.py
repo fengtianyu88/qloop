@@ -11,7 +11,7 @@ from app.config import settings
 
 # Create the Celery instance. Both broker and backend use Redis.
 celery_app = Celery(
-    "bms_sox",
+    "qloop",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
     include=[

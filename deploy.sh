@@ -28,7 +28,7 @@ APP_NAME="qloop"
 APP_SHORT_NAME="qloop"
 
 # ---------- 安装路径 ----------
-INSTALL_DIR="/opt/bms-sox"                  # 项目部署根目录
+INSTALL_DIR="/opt/qloop"                  # 项目部署根目录
 VENV_DIR="$INSTALL_DIR/backend/venv"        # Python 虚拟环境目录
 
 # ---------- 端口配置 ----------
@@ -40,9 +40,9 @@ MINIO_API_PORT=9000                          # MinIO API 端口
 MINIO_CONSOLE_PORT=9001                      # MinIO 控制台端口
 
 # ---------- PostgreSQL ----------
-PG_DB_NAME="bms_sox"                         # 数据库名
-PG_DB_USER="bms"                             # 数据库用户名
-PG_DB_PASSWORD="bms@2026"                    # 数据库密码 (请修改!)
+PG_DB_NAME="qloop"                         # 数据库名
+PG_DB_USER="qloop"                             # 数据库用户名
+PG_DB_PASSWORD="qloop@2026"                    # 数据库密码 (请修改!)
 
 # ---------- Redis ----------
 REDIS_PASSWORD=""                            # Redis 密码 (空=无密码)
@@ -50,7 +50,7 @@ REDIS_PASSWORD=""                            # Redis 密码 (空=无密码)
 # ---------- MinIO ----------
 MINIO_ACCESS_KEY="minioadmin"                # MinIO 访问密钥
 MINIO_SECRET_KEY="minioadmin@2026"           # MinIO 秘密密钥 (请修改!)
-MINIO_BUCKET="bms-sox"                       # 存储桶名称
+MINIO_BUCKET="qloop"                       # 存储桶名称
 MINIO_DATA_DIR="/data/minio"                 # MinIO 数据存储目录
 
 # ---------- 应用安全 ----------
@@ -68,7 +68,7 @@ SMTP_HOST="localhost"
 SMTP_PORT=25
 SMTP_USER=""                                 # 留空=不认证
 SMTP_PASSWORD=""                             # 留空=不认证
-SMTP_FROM="noreply@bms-sox.local"
+SMTP_FROM="noreply@qloop.local"
 
 # ---------- LLM 大模型 (可选, 也可启动后在系统页面配置) ----------
 LLM_TIMEOUT=300                              # LLM 调用超时 (秒)
@@ -79,8 +79,8 @@ LLM_MAX_RETRIES=3                            # LLM 最大重试次数
 FRONTEND_ORIGINS="http://localhost:5173,http://localhost"
 
 # ---------- 运行用户 ----------
-RUN_USER="bms"                               # 运行服务的系统用户
-RUN_GROUP="bms"
+RUN_USER="qloop"                               # 运行服务的系统用户
+RUN_GROUP="qloop"
 
 # ---------- Node.js 版本 ----------
 NODE_MAJOR=20                                # Node.js 大版本 (18/20/22)
@@ -396,19 +396,19 @@ build_frontend() {
         bash -c "cd $INSTALL_DIR/frontend && npm run build" 2>/dev/null
 
     # 复制到 Nginx 目录
-    mkdir -p /var/www/bms-sox
-    cp -r dist/* /var/www/bms-sox/
-    chown -R www-data:www-data /var/www/bms-sox 2>/dev/null || \
-        chown -R nginx:nginx /var/www/bms-sox 2>/dev/null || true
+    mkdir -p /var/www/qloop
+    cp -r dist/* /var/www/qloop/
+    chown -R www-data:www-data /var/www/qloop 2>/dev/null || \
+        chown -R nginx:nginx /var/www/qloop 2>/dev/null || true
 
-    log "前端构建完成, 产物部署到 /var/www/bms-sox"
+    log "前端构建完成, 产物部署到 /var/www/qloop"
 }
 
 # 配置 Nginx
 setup_nginx() {
     log "配置 Nginx ..."
 
-    cat > /etc/nginx/sites-available/bms-sox <<'EOF'
+    cat > /etc/nginx/sites-available/qloop <<'EOF'
 server {
     listen 80;
     server_name _;
@@ -417,7 +417,7 @@ server {
 
     # 前端静态文件
     location / {
-        root /var/www/bms-sox;
+        root /var/www/qloop;
         index index.html;
         try_files $uri $uri/ /index.html;
     }
@@ -434,9 +434,9 @@ server {
     }
 }
 EOF
-    sed -i "s/BACKEND_PORT/$BACKEND_PORT/" /etc/nginx/sites-available/bms-sox
+    sed -i "s/BACKEND_PORT/$BACKEND_PORT/" /etc/nginx/sites-available/qloop
 
-    ln -sf /etc/nginx/sites-available/bms-sox /etc/nginx/sites-enabled/bms-sox
+    ln -sf /etc/nginx/sites-available/qloop /etc/nginx/sites-enabled/qloop
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null
 
     nginx -t 2>/dev/null
@@ -454,7 +454,7 @@ create_systemd_services() {
     mkdir -p "$MINIO_DATA_DIR"
     chown -R "$RUN_USER:$RUN_GROUP" "$MINIO_DATA_DIR"
 
-    cat > /etc/systemd/system/bms-minio.service <<EOF
+    cat > /etc/systemd/system/qloop-minio.service <<EOF
 [Unit]
 Description=$APP_SHORT_NAME MinIO Object Storage
 After=network.target
@@ -476,7 +476,7 @@ WantedBy=multi-user.target
 EOF
 
     # ---------- 后端 ----------
-    cat > /etc/systemd/system/bms-backend.service <<EOF
+    cat > /etc/systemd/system/qloop-backend.service <<EOF
 [Unit]
 Description=$APP_SHORT_NAME Backend API
 After=network.target postgresql.service redis-server.service
@@ -496,10 +496,10 @@ WantedBy=multi-user.target
 EOF
 
     # ---------- Celery ----------
-    cat > /etc/systemd/system/bms-celery.service <<EOF
+    cat > /etc/systemd/system/qloop-celery.service <<EOF
 [Unit]
 Description=$APP_SHORT_NAME Celery Worker
-After=network.target redis-server.service bms-backend.service
+After=network.target redis-server.service qloop-backend.service
 
 [Service]
 Type=simple
@@ -516,22 +516,22 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable bms-minio bms-backend bms-celery >/dev/null 2>&1
+    systemctl enable qloop-minio qloop-backend qloop-celery >/dev/null 2>&1
 
-    log "systemd 服务已创建 (bms-minio / bms-backend / bms-celery)"
+    log "systemd 服务已创建 (qloop-minio / qloop-backend / qloop-celery)"
 }
 
 # 启动所有服务
 start_services() {
     log "启动服务 ..."
 
-    systemctl start bms-minio
+    systemctl start qloop-minio
     sleep 2  # 等待 MinIO 就绪
 
-    systemctl start bms-backend
+    systemctl start qloop-backend
     sleep 3  # 等待后端就绪
 
-    systemctl start bms-celery
+    systemctl start qloop-celery
 
     log "所有服务已启动"
 }
@@ -539,18 +539,18 @@ start_services() {
 # 停止所有服务
 stop_services() {
     log "停止服务 ..."
-    systemctl stop bms-celery bms-backend bms-minio 2>/dev/null || true
+    systemctl stop qloop-celery qloop-backend qloop-minio 2>/dev/null || true
     log "服务已停止"
 }
 
 # 重启所有服务
 restart_services() {
     log "重启服务 ..."
-    systemctl restart bms-minio
+    systemctl restart qloop-minio
     sleep 2
-    systemctl restart bms-backend
+    systemctl restart qloop-backend
     sleep 3
-    systemctl restart bms-celery
+    systemctl restart qloop-celery
     log "服务已重启"
 }
 
@@ -601,7 +601,7 @@ verify_deployment() {
     fi
 
     # Celery
-    if systemctl is-active --quiet bms-celery; then
+    if systemctl is-active --quiet qloop-celery; then
         info "  [OK] Celery Worker"
     else
         err "  [FAIL] Celery Worker"
@@ -633,8 +633,8 @@ verify_deployment() {
         echo ""
         echo "  排查命令:"
         echo "    sudo ./deploy.sh --logs     # 查看后端日志"
-        echo "    sudo journalctl -u bms-backend -n 50  # 查看后端 systemd 日志"
-        echo "    sudo journalctl -u bms-celery -n 50   # 查看 Celery 日志"
+        echo "    sudo journalctl -u qloop-backend -n 50  # 查看后端 systemd 日志"
+        echo "    sudo journalctl -u qloop-celery -n 50   # 查看 Celery 日志"
         exit 1
     fi
 }
@@ -642,7 +642,7 @@ verify_deployment() {
 # 显示状态
 show_status() {
     echo -e "${BLUE}════════════════ $APP_NAME 服务状态 ══════════════════${NC}"
-    for svc in bms-minio bms-backend bms-celery nginx postgresql redis-server; do
+    for svc in qloop-minio qloop-backend qloop-celery nginx postgresql redis-server; do
         local state=$(systemctl is-active "$svc" 2>/dev/null || echo "未安装")
         if [[ "$state" == "active" ]]; then
             printf "  ${GREEN}%-15s${NC} %s\n" "$svc" "✓ 运行中"
@@ -657,7 +657,7 @@ show_status() {
 show_logs() {
     echo "后端日志 (最近 50 行), Ctrl+C 退出 ..."
     echo ""
-    journalctl -u bms-backend -n 50 --no-pager -f
+    journalctl -u qloop-backend -n 50 --no-pager -f
 }
 
 # 显示帮助

@@ -1,6 +1,6 @@
-"""BMS SOX 交付管理系统 — 全面功能测试脚本
+"""qloop — 全面功能测试脚本
 
-依据设计文档 docs/superpowers/specs/2026-07-16-bms-sox-delivery-system-design.md
+依据设计文档 docs/superpowers/specs/2026-07-16-qloop-design.md
 对后端 API 进行端到端功能测试，覆盖：
   1. 认证 (登录/注册/当前用户/密码重置流程)
   2. 用户管理 (CRUD/角色)
@@ -13,7 +13,7 @@
   9. 通知
   10. 权限矩阵 (无 Token / 角色不足 / 跨项目隔离)
 
-运行: /opt/bms-venv/bin/python /workspace/test_features.py
+运行: /opt/qloop/backend/venv/bin/python /workspace/test_features.py
 """
 from __future__ import annotations
 
@@ -1284,7 +1284,7 @@ def minio_is_up() -> bool:
 
 def main() -> int:
     print("=" * 72)
-    print("BMS SOX 交付管理系统 — 全面功能测试")
+    print("qloop — 全面功能测试")
     print("=" * 72)
 
     minio_up = minio_is_up()
