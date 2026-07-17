@@ -1,109 +1,111 @@
 # qloop
 
-> 版本：1.0.0  日期：2026-07-16
+> English | [简体中文](README_zh-CN.md)
 
-## 品牌释义
+> Version: 1.0.0  Date: 2026-07-16
 
-**qloop** = **Q**uality + **Loop**。把「质量」和「闭环」融为一体，暗含测试在开发中不断循环、完善、不留漏洞。5 个字母，极度简短，抽象现代。
+## About the Name
 
-## 项目简介
+**qloop** = **Q**uality + **Loop**. It fuses "quality" and "closed loop" into one, alluding to testing that continuously cycles and refines throughout development without leaving gaps. Five letters, extremely short, abstract and modern.
 
-qloop 是一套质量闭环管理系统，用于管理团队中代码开发、测试、评审与对外交付的全流程。系统支持代码包管理、评审报告管理、测试报告管理、LLM 自动化评审、用户权限管理、项目全生命周期管理等功能。
+## Overview
 
-## 目录结构
+qloop is a quality closed-loop management system that governs the full lifecycle of code development, testing, review, and external delivery within a team. It covers code package management, review report management, test report management, LLM-based automated review, user permission management, and project lifecycle management.
+
+## Directory Structure
 
 ```
 qloop/
-├── backend/                 # 后端 FastAPI 应用
+├── backend/                 # Backend FastAPI application
 │   ├── app/
-│   │   ├── api/             # API 路由（auth, users, projects, releases, reviews 等）
-│   │   ├── models/          # 数据库模型（User, Project, Release, LLMReview 等）
-│   │   ├── schemas/         # Pydantic 请求/响应模型
-│   │   ├── services/        # 业务逻辑层
-│   │   ├── llm/             # LLM 评审引擎（代码解析、文档解析、LLM 调用）
-│   │   ├── tasks/           # Celery 异步任务（LLM 评审、邮件、通知）
-│   │   ├── storage/         # MinIO 文件存储
-│   │   ├── utils/           # 工具函数（安全、分页）
-│   │   ├── config.py        # 配置管理
-│   │   ├── database.py      # 数据库连接
-│   │   └── main.py          # 应用入口
-│   ├── .env.example         # 环境变量模板
-│   └── requirements.txt     # Python 依赖
-├── frontend/                # 前端 Vue 3 应用
+│   │   ├── api/             # API routes (auth, users, projects, releases, reviews, etc.)
+│   │   ├── models/          # Database models (User, Project, Release, LLMReview, etc.)
+│   │   ├── schemas/         # Pydantic request/response models
+│   │   ├── services/        # Business logic layer
+│   │   ├── llm/             # LLM review engine (code parsing, doc parsing, LLM calls)
+│   │   ├── tasks/           # Celery async tasks (LLM review, email, notifications)
+│   │   ├── storage/         # MinIO file storage
+│   │   ├── utils/           # Utilities (security, pagination)
+│   │   ├── config.py        # Configuration management
+│   │   ├── database.py      # Database connection
+│   │   └── main.py          # Application entry point
+│   ├── .env.example         # Environment variable template
+│   └── requirements.txt     # Python dependencies
+├── frontend/                # Frontend Vue 3 application
 │   ├── src/
-│   │   ├── api/             # API 请求模块
-│   │   ├── components/      # 公共组件（Layout）
-│   │   ├── router/          # 路由配置
-│   │   ├── stores/          # Pinia 状态管理
-│   │   ├── types/           # TypeScript 类型定义
-│   │   ├── views/           # 页面组件
-│   │   ├── App.vue          # 根组件
-│   │   └── main.ts          # 应用入口
+│   │   ├── api/             # API request modules
+│   │   ├── components/      # Shared components (Layout)
+│   │   ├── router/          # Routing configuration
+│   │   ├── stores/          # Pinia state management
+│   │   ├── types/           # TypeScript type definitions
+│   │   ├── views/           # Page components
+│   │   ├── App.vue          # Root component
+│   │   └── main.ts          # Application entry point
 │   ├── index.html
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── tsconfig.json
-└── docs/                    # 文档
-    ├── DEPLOYMENT.md                     # 部署指南（Linux + Windows）
+└── docs/                    # Documentation
+    ├── DEPLOYMENT.md                     # Deployment guide (Linux + Windows)
     └── superpowers/
-        ├── specs/                        # 设计文档
+        ├── specs/                        # Design documents
         │   └── 2026-07-16-qloop-design.md
-        └── plans/                        # 实施计划
+        └── plans/                        # Implementation plans
             └── 2026-07-16-qloop.md
 ```
 
-## 技术栈
+## Tech Stack
 
-| 层级 | 技术 |
-|------|------|
-| 前端 | Vue 3 + Element Plus + Vite + TypeScript + Pinia |
-| 后端 | FastAPI + SQLAlchemy 2.0 (async) + Pydantic 2 |
-| 数据库 | PostgreSQL 15+ |
-| 缓存/队列 | Redis 7+ |
-| 对象存储 | MinIO |
-| 异步任务 | Celery |
-| 认证 | JWT (python-jose) |
+| Layer | Technology |
+|-------|------------|
+| Frontend | Vue 3 + Element Plus + Vite + TypeScript + Pinia |
+| Backend | FastAPI + SQLAlchemy 2.0 (async) + Pydantic 2 |
+| Database | PostgreSQL 15+ |
+| Cache / Queue | Redis 7+ |
+| Object Storage | MinIO |
+| Async Tasks | Celery |
+| Auth | JWT (python-jose) |
 
-## 快速开始
+## Quick Start
 
-请阅读 **[部署指南](docs/DEPLOYMENT.md)** 了解完整的部署步骤。
+Read the **[Deployment Guide](docs/DEPLOYMENT.md)** for full deployment steps.
 
-### 简要步骤
+### Brief Steps
 
-1. **安装依赖服务**：PostgreSQL、Redis、MinIO
-2. **配置后端**：复制 `backend/.env.example` 为 `backend/.env`，填写数据库地址、账号密码、MinIO 配置等
-3. **安装 Python 依赖**：`pip install -r backend/requirements.txt`
-4. **初始化数据库**：运行建表脚本（见部署指南）
-5. **创建超级管理员**：运行初始化脚本（见部署指南）
-6. **启动后端**：`uvicorn app.main:app --host 0.0.0.0 --port 8000`
-7. **启动 Celery Worker**：`celery -A app.tasks.celery_app worker --loglevel=info`
-8. **构建前端**：`cd frontend && npm install && npm run build`
-9. **配置 Nginx**：指向前端构建产物，反向代理 `/api` 到后端
+1. **Install dependencies**: PostgreSQL, Redis, MinIO
+2. **Configure backend**: Copy `backend/.env.example` to `backend/.env` and fill in database address, credentials, MinIO settings, etc.
+3. **Install Python dependencies**: `pip install -r backend/requirements.txt`
+4. **Initialize database**: Run the table-creation script (see deployment guide)
+5. **Create super admin**: Run the initialization script (see deployment guide)
+6. **Start backend**: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
+7. **Start Celery worker**: `celery -A app.tasks.celery_app worker --loglevel=info`
+8. **Build frontend**: `cd frontend && npm install && npm run build`
+9. **Configure Nginx**: Serve the frontend build output and reverse-proxy `/api` to the backend
 
-## 核心功能
+## Key Features
 
-- **项目管理**：项目 → 版本 → 释放 三层结构
-- **交付流程**：7 步释放流程 + 3 次 LLM 自动评审
-- **代码包解析**：支持 C 代码、Python、MATLAB m 文件、Simulink 模型、.mat 文件、.pth 权重
-- **文档解析**：支持 Word (.docx) 和 Excel (.xlsx)
-- **LLM 评审**：多模型 + 自动回退，评分 + 建议输出
-- **权限管理**：系统级角色（访客/开发者/管理员/超级管理员）× 项目级角色（项目经理/开发人员/测试人员/外部技术专家）
-- **矩阵组织**：过程域维度（部门→科室→小组）× 项目维度
-- **审计日志**：全操作审计记录
-- **通知系统**：站内通知 + 邮件提醒
-- **用户自助**：注册账号、忘记密码找回
+- **Project Management**: Project → Version → Release, a three-tier hierarchy
+- **Delivery Workflow**: A 7-step release process with 3 automated LLM reviews
+- **Code Package Parsing**: Supports C code, Python, MATLAB `.m` files, Simulink models, `.mat` files, `.pth` weights
+- **Document Parsing**: Supports Word (`.docx`) and Excel (`.xlsx`)
+- **LLM Review**: Multi-model with automatic fallback, outputs scores and recommendations
+- **Permission Management**: System-level roles (Guest / Developer / Admin / Super Admin) × Project-level roles (Project Manager / Developer / Tester / External Technical Expert)
+- **Matrix Organization**: Process-domain dimension (Department → Section → Group) × Project dimension
+- **Audit Logging**: Full operation audit trail
+- **Notifications**: In-app notifications + email reminders
+- **Self-service**: Account registration, password recovery
 
-## 默认管理员
+## Default Admin
 
-首次部署后使用以下账号登录：
+After the first deployment, log in with:
 
-- 用户名：`admin`
-- 密码：`Admin@123`
+- Username: `admin`
+- Password: `Admin@123`
 
-**登录后请立即修改密码！**
+**Change the password immediately after login!**
 
-## 许可证
+## License
 
-本项目基于 [MIT License](LICENSE) 开源，允许任何用途（含商用），仅需保留版权声明。
+This project is open-sourced under the [MIT License](LICENSE). Any use (including commercial) is permitted, provided the copyright notice is retained.
 
 Copyright (c) 2026 fengtianyu88
