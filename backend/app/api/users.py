@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 @router.get("", response_model=PaginatedResponse[UserResponse])
 async def list_users(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=500),
     search: Optional[str] = Query(None),
     org_unit_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
