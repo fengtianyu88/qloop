@@ -284,6 +284,7 @@ onMounted(() => {
       v-model="dialogVisible"
       :title="dialogMode === 'create' ? '创建用户' : '编辑用户'"
       width="520px"
+      class="dialog-scroll"
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="用户名" prop="username">
@@ -341,5 +342,10 @@ onMounted(() => {
 
 .list-header .page-title {
   margin: 0;
+}
+
+:deep(.dialog-scroll .el-dialog__body) {
+  max-height: 60vh;
+  overflow-y: auto;
 }
 </style>

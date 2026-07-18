@@ -74,6 +74,34 @@ SMTP_FROM="noreply@qloop.local"
 LLM_TIMEOUT=300                              # LLM 调用超时 (秒)
 LLM_MAX_RETRIES=3                            # LLM 最大重试次数
 
+# ---------- 后端监听地址 (Nginx 反代目标) ----------
+# 普通 Linux 服务器: 127.0.0.1 (默认)
+# WSL2 mirrored 网络模式: 10.255.255.254 (当 127.0.0.1 不可达时改此值)
+BACKEND_HOST="127.0.0.1"
+
+# ---------- LLM 大模型种子 (可选, 留空 API_KEY 则跳过该模型) ----------
+# 所有模型均使用 OpenAI 兼容接口。部署后也可在「LLM 配置」页面手动增删改。
+# priority 数字越小优先级越高 (主模型用小数字, 备用模型用大数字)。
+LLM_MINIMAX_M3_API_BASE="https://api.minimaxi.com/v1"
+LLM_MINIMAX_M3_API_KEY=""
+LLM_MINIMAX_M3_MODEL="MiniMax-M3"
+LLM_MINIMAX_M3_PRIORITY=10
+
+LLM_MINIMAX_M27_API_BASE="https://api.minimaxi.com/v1"
+LLM_MINIMAX_M27_API_KEY=""
+LLM_MINIMAX_M27_MODEL="MiniMax-M2.7"
+LLM_MINIMAX_M27_PRIORITY=20
+
+LLM_GLM_API_BASE="https://open.bigmodel.cn/api/paas/v4"
+LLM_GLM_API_KEY=""
+LLM_GLM_MODEL="glm-5.2"
+LLM_GLM_PRIORITY=30
+
+LLM_DEEPSEEK_API_BASE="https://api.deepseek.com/v1"
+LLM_DEEPSEEK_API_KEY=""
+LLM_DEEPSEEK_MODEL="deepseek-v4-flash"
+LLM_DEEPSEEK_PRIORITY=40
+
 # ---------- 前端访问来源 (CORS, 逗号分隔) ----------
 # 开发模式: http://localhost:5173 ; 生产 Nginx: http://你的域名或IP
 FRONTEND_ORIGINS="http://localhost:5173,http://localhost"
@@ -379,6 +407,71 @@ asyncio.run(create_admin())
     cd - >/dev/null
 }
 
+# 种子 LLM 模型配置 (幂等: 按 name 查重, 已存在则跳过; API_KEY 为空则跳过)
+seed_llm_models() {
+    log "种子 LLM 模型配置 ..."
+
+    cd "$INSTALL_DIR/backend"
+    # 通过 env 显式传递变量给 sudo -u 子进程 (quoted heredoc 不做 shell 插值,
+    # Python 端用 os.environ.get 读取, 避免 API Key 中的特殊字符被 shell 解释)
+    sudo -u "$RUN_USER" env \
+        LLM_MINIMAX_M3_API_BASE="$LLM_MINIMAX_M3_API_BASE" \
+        LLM_MINIMAX_M3_API_KEY="$LLM_MINIMAX_M3_API_KEY" \
+        LLM_MINIMAX_M3_MODEL="$LLM_MINIMAX_M3_MODEL" \
+        LLM_MINIMAX_M3_PRIORITY="$LLM_MINIMAX_M3_PRIORITY" \
+        LLM_MINIMAX_M27_API_BASE="$LLM_MINIMAX_M27_API_BASE" \
+        LLM_MINIMAX_M27_API_KEY="$LLM_MINIMAX_M27_API_KEY" \
+        LLM_MINIMAX_M27_MODEL="$LLM_MINIMAX_M27_MODEL" \
+        LLM_MINIMAX_M27_PRIORITY="$LLM_MINIMAX_M27_PRIORITY" \
+        LLM_GLM_API_BASE="$LLM_GLM_API_BASE" \
+        LLM_GLM_API_KEY="$LLM_GLM_API_KEY" \
+        LLM_GLM_MODEL="$LLM_GLM_MODEL" \
+        LLM_GLM_PRIORITY="$LLM_GLM_PRIORITY" \
+        LLM_DEEPSEEK_API_BASE="$LLM_DEEPSEEK_API_BASE" \
+        LLM_DEEPSEEK_API_KEY="$LLM_DEEPSEEK_API_KEY" \
+        LLM_DEEPSEEK_MODEL="$LLM_DEEPSEEK_MODEL" \
+        LLM_DEEPSEEK_PRIORITY="$LLM_DEEPSEEK_PRIORITY" \
+        "$VENV_DIR/bin/python" <<'PYEOF'
+import asyncio, os
+from sqlalchemy import select
+from app.database import async_session
+from app.models.review import LLMModel, LLMProtocol
+
+# (显示名, api_base 环境变量, api_key 环境变量, model_name 环境变量, priority 环境变量)
+SEEDS = [
+    ("minimax-M3",        "LLM_MINIMAX_M3_API_BASE",   "LLM_MINIMAX_M3_API_KEY",   "LLM_MINIMAX_M3_MODEL",   "LLM_MINIMAX_M3_PRIORITY"),
+    ("minimax-M2.7",      "LLM_MINIMAX_M27_API_BASE",  "LLM_MINIMAX_M27_API_KEY",  "LLM_MINIMAX_M27_MODEL",  "LLM_MINIMAX_M27_PRIORITY"),
+    ("GLM-5.2",           "LLM_GLM_API_BASE",          "LLM_GLM_API_KEY",          "LLM_GLM_MODEL",          "LLM_GLM_PRIORITY"),
+    ("Deepseek-V4-flash", "LLM_DEEPSEEK_API_BASE",     "LLM_DEEPSEEK_API_KEY",     "LLM_DEEPSEEK_MODEL",     "LLM_DEEPSEEK_PRIORITY"),
+]
+
+async def seed():
+    async with async_session() as db:
+        for name, base_env, key_env, model_env, pri_env in SEEDS:
+            api_base = os.environ.get(base_env, "")
+            api_key  = os.environ.get(key_env, "")
+            model    = os.environ.get(model_env, "")
+            priority = int(os.environ.get(pri_env, "100") or "100")
+            if not api_key:
+                print(f"  跳过 {name}: API_KEY 为空")
+                continue
+            exists = await db.execute(select(LLMModel).where(LLMModel.name == name))
+            if exists.scalar_one_or_none() is not None:
+                print(f"  跳过 {name}: 已存在")
+                continue
+            db.add(LLMModel(
+                name=name, protocol=LLMProtocol.OPENAI,
+                api_base=api_base, api_key=api_key,
+                model_name=model, is_active=True, priority=priority,
+            ))
+            print(f"  注册 {name} ({model}) priority={priority}")
+        await db.commit()
+asyncio.run(seed())
+PYEOF
+    cd - >/dev/null
+    log "LLM 模型种子完成"
+}
+
 # 构建前端
 build_frontend() {
     log "构建前端 ..."
@@ -442,7 +535,7 @@ server {
 
     # API 反向代理到后端
     location /api/ {
-        proxy_pass http://127.0.0.1:BACKEND_PORT;
+        proxy_pass http://BACKEND_HOST:BACKEND_PORT;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -452,6 +545,7 @@ server {
     }
 }
 EOF
+    sed -i "s/BACKEND_HOST/$BACKEND_HOST/" /etc/nginx/sites-available/qloop
     sed -i "s/BACKEND_PORT/$BACKEND_PORT/" /etc/nginx/sites-available/qloop
 
     ln -sf /etc/nginx/sites-available/qloop /etc/nginx/sites-enabled/qloop
@@ -461,7 +555,7 @@ EOF
     systemctl reload nginx
     systemctl enable nginx >/dev/null 2>&1
 
-    log "Nginx 配置完成 (端口 80 → 前端 + 代理 API:$BACKEND_PORT)"
+    log "Nginx 配置完成 (端口 80 → 前端 + 代理 $BACKEND_HOST:$BACKEND_PORT)"
 }
 
 # 创建 systemd 服务
@@ -749,6 +843,7 @@ main() {
     generate_env
     update_cors
     init_database
+    seed_llm_models
     build_frontend
     setup_nginx
     create_systemd_services

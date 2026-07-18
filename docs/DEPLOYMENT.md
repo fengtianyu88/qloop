@@ -199,6 +199,40 @@ server: {
 | LLM API Key | 系统页面 | 是 | `sk-xxx` | 超管在LLM配置页填写 |
 | LLM 模型名 | 系统页面 | 是 | `qwen-72b` | 超管在LLM配置页填写 |
 
+### 3.4 LLM 模型种子配置（deploy.sh 一键部署）
+
+使用 `deploy.sh` 一键部署时，可在脚本「配置区」预填 4 个 LLM 模型的 API Key，部署时自动注册到数据库。留空 API_KEY 的模型会被跳过（幂等，重复部署不会重复创建）。
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LLM_MINIMAX_M3_API_BASE` | `https://api.minimaxi.com/v1` | MiniMax M3 API 地址 |
+| `LLM_MINIMAX_M3_API_KEY` | （空） | 填入后自动注册 minimax-M3 |
+| `LLM_MINIMAX_M3_MODEL` | `MiniMax-M3` | 模型名 |
+| `LLM_MINIMAX_M3_PRIORITY` | `10` | 优先级（数字越小越高） |
+| `LLM_MINIMAX_M27_API_BASE` | `https://api.minimaxi.com/v1` | MiniMax M2.7 API 地址 |
+| `LLM_MINIMAX_M27_API_KEY` | （空） | 填入后自动注册 minimax-M2.7 |
+| `LLM_MINIMAX_M27_MODEL` | `MiniMax-M2.7` | 模型名 |
+| `LLM_MINIMAX_M27_PRIORITY` | `20` | 优先级 |
+| `LLM_GLM_API_BASE` | `https://open.bigmodel.cn/api/paas/v4` | 智谱 GLM API 地址 |
+| `LLM_GLM_API_KEY` | （空） | 填入后自动注册 GLM-5.2 |
+| `LLM_GLM_MODEL` | `glm-5.2` | 模型名 |
+| `LLM_GLM_PRIORITY` | `30` | 优先级 |
+| `LLM_DEEPSEEK_API_BASE` | `https://api.deepseek.com/v1` | DeepSeek API 地址 |
+| `LLM_DEEPSEEK_API_KEY` | （空） | 填入后自动注册 Deepseek-V4-flash |
+| `LLM_DEEPSEEK_MODEL` | `deepseek-v4-flash` | 模型名 |
+| `LLM_DEEPSEEK_PRIORITY` | `40` | 优先级 |
+
+所有模型均使用 OpenAI 兼容接口。如需添加其他模型（通义千问、Ollama、vLLM 等），部署后可在「LLM 配置」页面手动添加。
+
+### 3.5 后端监听地址（`BACKEND_HOST`）
+
+`deploy.sh` 中 `BACKEND_HOST` 控制 Nginx 反向代理的目标地址：
+
+| 场景 | `BACKEND_HOST` 值 | 说明 |
+|------|-------------------|------|
+| 普通 Linux 服务器 | `127.0.0.1`（默认） | 后端与 Nginx 在同一台机器 |
+| WSL2 mirrored 网络模式 | `10.255.255.254` | 当 `127.0.0.1:8000` 返回 Connection refused 时改用此值 |
+
 ---
 
 ## 4. Linux 部署
@@ -740,6 +774,12 @@ app.add_middleware(
 3. **登录后请立即修改密码**（在「个人信息」页面）
 
 ### 7.2 配置 LLM 大模型
+
+**方式一：deploy.sh 预置种子（推荐）**
+
+在 `deploy.sh` 配置区填入 4 个模型（minimax-M3 / minimax-M2.7 / GLM-5.2 / Deepseek-V4-flash）的 API Key，部署时自动注册（详见 3.4 节）。留空的模型跳过，不影响部署。
+
+**方式二：页面手动添加**
 
 1. 以超级管理员登录
 2. 进入「LLM 配置」页面

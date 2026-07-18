@@ -369,6 +369,7 @@ onMounted(async () => {
       v-model="modelDialogVisible"
       :title="modelDialogMode === 'create' ? '新增模型' : '编辑模型'"
       width="520px"
+      class="dialog-scroll"
     >
       <el-form ref="modelFormRef" :model="modelForm" :rules="modelRules" label-width="100px">
         <el-form-item label="名称" prop="name">
@@ -414,6 +415,7 @@ onMounted(async () => {
       v-model="ruleDialogVisible"
       :title="ruleDialogMode === 'create' ? '新增评审规则' : '编辑评审规则'"
       width="640px"
+      class="dialog-scroll"
     >
       <el-form ref="ruleFormRef" :model="ruleForm" :rules="ruleRules" label-width="110px">
         <el-form-item label="评审类型" prop="review_type">
@@ -492,5 +494,10 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+:deep(.dialog-scroll .el-dialog__body) {
+  max-height: 60vh;
+  overflow-y: auto;
 }
 </style>

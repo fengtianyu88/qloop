@@ -2,7 +2,7 @@
 
 > English | [简体中文](README_zh-CN.md)
 
-> Version: 1.0.0  Date: 2026-07-16
+> Version: 1.1.0  Date: 2026-07-18
 
 ## About the Name
 
@@ -88,7 +88,7 @@ Read the **[Deployment Guide](docs/DEPLOYMENT.md)** for full deployment steps.
 - **Delivery Workflow**: A 7-step release process with 3 automated LLM reviews
 - **Code Package Parsing**: Supports C code, Python, MATLAB `.m` files, Simulink models, `.mat` files, `.pth` weights
 - **Document Parsing**: Supports Word (`.docx`) and Excel (`.xlsx`)
-- **LLM Review**: Multi-model with automatic fallback, outputs scores and recommendations
+- **LLM Review**: Multi-model with automatic fallback, outputs scores and recommendations. Supports any OpenAI-compatible API — minimax-M3/M2.7, GLM-5.2, Deepseek-V4-flash, Qwen, Ollama, etc.
 - **Permission Management**: System-level roles (Guest / Developer / Admin / Super Admin) × Project-level roles (Project Manager / Developer / Tester / External Technical Expert)
 - **Matrix Organization**: Process-domain dimension (Department → Section → Group) × Project dimension
 - **Audit Logging**: Full operation audit trail

@@ -300,7 +300,7 @@ onMounted(async () => {
     </el-dialog>
 
     <!-- 创建版本对话框 -->
-    <el-dialog v-model="versionDialogVisible" title="创建版本" width="520px">
+    <el-dialog v-model="versionDialogVisible" title="创建版本" width="520px" class="dialog-scroll">
       <el-form ref="versionFormRef" :model="versionForm" :rules="versionRules" label-width="90px">
         <el-form-item label="版本号" prop="version_number">
           <el-input v-model="versionForm.version_number" placeholder="例如：v1.0.0" />
@@ -348,5 +348,10 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+:deep(.dialog-scroll .el-dialog__body) {
+  max-height: 60vh;
+  overflow-y: auto;
 }
 </style>
