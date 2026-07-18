@@ -2,7 +2,7 @@
  * 释放管理 API
  */
 import request from './request'
-import type { Release } from '@/types'
+import type { Release, ReleaseListItem } from '@/types'
 
 /** 获取释放详情 */
 export function getRelease(id: string): Promise<Release> {
@@ -92,3 +92,9 @@ export async function downloadArtifact(
   window.URL.revokeObjectURL(url)
 }
 
+
+
+/** 获取某版本的所有释放列表 */
+export function getReleasesByVersion(versionId: string): Promise<ReleaseListItem[]> {
+  return request.get(`/releases/by-version/${versionId}`)
+}

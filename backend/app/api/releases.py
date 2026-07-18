@@ -1,7 +1,7 @@
 """Release management API routes."""
 
 import uuid
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import (
     APIRouter,
@@ -20,7 +20,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.project import Release, Version
 from app.models.user import User
-from app.schemas.project import ReleaseResponse
+from app.schemas.project import ReleaseListResponse, ReleaseResponse
 from app.services.audit_service import create_audit_log
 from app.services.permission_service import check_pm_permission, check_project_access
 from app.services.release_service import (
@@ -108,6 +108,25 @@ async def _enrich_release_response(
     if response.confirmed_by and response.confirmed_by in users:
         response.confirmed_by_name = users[response.confirmed_by].username
     return response
+
+@router.get(
+    "/by-version/{version_id}",
+    response_model=List[ReleaseListResponse],
+)
+async def list_releases_by_version(
+    version_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all releases for a given version (newest first)."""
+    result = await db.execute(
+        select(Release)
+        .where(Release.version_id == version_id)
+        .order_by(Release.release_number.desc())
+    )
+    releases = result.scalars().all()
+    return [ReleaseListResponse.model_validate(r) for r in releases]
+
 
 @router.get("/{release_id}", response_model=ReleaseResponse)
 async def get_release(

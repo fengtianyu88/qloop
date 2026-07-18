@@ -315,6 +315,17 @@ _JSON_CODE_BLOCK_RE = re.compile(
 # mid-thought), drop everything from <think> to the end of the string.
 _THINK_BLOCK_RE = re.compile(r"<think>.*?(?:</think>|$)", re.DOTALL)
 
+# HTML-style reasoning tags emitted by some providers / wrappers
+# (e.g. MiniMax-M3 via OpenAI-compat, vLLM, certain Zhipu GLM deployments):
+#    <think>...chain of thought...</think>
+# These should also be stripped before parsing JSON. If the closing tag is
+# missing (output was truncated mid-thought), drop everything from <think>
+# to the end of the string.
+_HTML_THINK_BLOCK_RE = re.compile(
+    r"<think>.*?(?:</think>|$)",
+    re.DOTALL | re.IGNORECASE,
+)
+
 
 def _to_text(value: Any) -> str:
     """Coerce a parsed JSON value into a text-safe string.
@@ -375,6 +386,35 @@ def _normalize_review_payload(parsed: dict) -> dict:
             if k not in parsed:
                 parsed[k] = v
 
+    # Layout G: MiniMax-M3 detailed review wraps everything under a Chinese
+    # top-level key like "评审报告" or "代码评审报告". Unwrap it.
+    chinese_wrappers = ("评审报告", "代码评审报告", "测试评审报告", "测试报告评审",
+                          "专家评审报告", "评审结果", "review",
+                          # Layout H: MiniMax-M3 expert report wraps everything
+                          # under "评审结论" / "评审元信息" but those are NOT
+                          # wrappers to unwrap - they carry the verdict+scores.
+                          # We do NOT add them here; they are handled explicitly below.
+                          )
+    for wrapper_key in chinese_wrappers:
+        wrapper = parsed.get(wrapper_key)
+        if isinstance(wrapper, dict):
+            for k, v in wrapper.items():
+                if k not in parsed:
+                    parsed[k] = v
+            break
+
+    # Generic single-key unwrap: if there's exactly one top-level key whose
+    # value is a dict, and that dict contains known review fields, unwrap it.
+    if len(parsed) == 1:
+        only_val = next(iter(parsed.values()))
+        if isinstance(only_val, dict):
+            known_keys = {"total_score", "overall_score", "overall_rating",
+                          "overall_assessment", "dimension_scores",
+                          "score_breakdown", "conclusion", "结论", "总结",
+                          "issues", "findings", "评审人员备注"}
+            if known_keys & set(only_val.keys()):
+                parsed = only_val
+
     # --- total_score -------------------------------------------------------
     total_score = None
     score_max = 100.0
@@ -386,16 +426,39 @@ def _normalize_review_payload(parsed: dict) -> dict:
             total_score = float(val)
             break
 
-    # If overall_score is a dict (Layout B), dig into it.
+    # If overall_score is a dict (Layout B / Layout J), dig into it.
     overall = parsed.get("overall_score") or parsed.get("overall_rating")
     if total_score is None and isinstance(overall, dict):
-        for key in ("composite", "score", "total"):
+        for key in ("composite", "score", "total", "composite_score",
+                    "overall_score", "weighted_total", "total_score",
+                    "weighted_average", "average"):
             val = overall.get(key)
             if isinstance(val, (int, float)):
                 total_score = float(val)
                 break
         if isinstance(overall.get("max"), (int, float)):
             score_max = float(overall["max"])
+
+    # Layout D: overall_assessment wrapper (emitted by minimax-M3).
+    # {"overall_assessment": {"score": 4.5, "max_score": 10, "summary": "..."}}
+    overall_assessment = parsed.get("overall_assessment")
+    if total_score is None and isinstance(overall_assessment, dict):
+        for key in ("score", "total", "composite", "overall_score"):
+            val = overall_assessment.get(key)
+            if isinstance(val, (int, float)):
+                total_score = float(val)
+                break
+        for key in ("max_score", "max", "score_max"):
+            val = overall_assessment.get(key)
+            if isinstance(val, (int, float)):
+                score_max = float(val)
+                break
+        # Lift summary into conclusion if conclusion is empty (handled later).
+        if isinstance(overall_assessment.get("summary"), str) and "summary" not in parsed:
+            parsed["summary"] = overall_assessment["summary"]
+        # Lift risk_level into risk_points if not present.
+        if isinstance(overall_assessment.get("risk_level"), str) and "risk_points" not in parsed:
+            parsed["risk_points"] = f"risk_level: {overall_assessment['risk_level']}"
 
     if total_score is None:
         total_score = 0.0
@@ -418,6 +481,26 @@ def _normalize_review_payload(parsed: dict) -> dict:
         if isinstance(val, dict):
             raw_dims = val
             break
+
+    # Layout J: if no dimension_scores field, but overall_score is a dict
+    # containing per-dimension numeric scores (e.g. professionalism, completeness),
+    # harvest them as dimension_scores.
+    if not raw_dims and isinstance(overall, dict):
+        composite_keys = ("composite", "score", "total", "composite_score",
+                           "overall_score", "weighted_total", "total_score",
+                           "weighted_average", "average", "max")
+        for dk, dv in overall.items():
+            if dk in composite_keys:
+                continue
+            if isinstance(dv, (int, float)) and dv <= 100:
+                raw_dims[dk] = dv
+            elif isinstance(dv, dict):
+                # Per-dimension dict with score/rating inside.
+                for sk in ("score", "rating", "得分", "评分"):
+                    sv = dv.get(sk)
+                    if isinstance(sv, (int, float)):
+                        raw_dims[dk] = sv
+                        break
 
     # Some LLMs nest text fields inside dimension_scores.
     extra_keys = ("conclusion", "suggestions", "risk_points")
@@ -458,12 +541,156 @@ def _normalize_review_payload(parsed: dict) -> dict:
             if v <= score_max:
                 clean_dims[k] = v * (100.0 / score_max)
 
+    # --- Layout H: MiniMax-M3 expert report review (all-Chinese keys) -----
+    # Structure: 评审结论.{综合评级, 综合评分.{各维度分数, 加权总分}, 一句话结论}
+    #             维度评审详情.<dim>.评分
+    #             对原报告的改进建议 [{类别, 优先级, 建议}]
+    #             原报告Top 5待改进项 [...]
+    # Note: total_score may be 0.0 (default fallback) when no English score
+    # fields exist. Trigger on falsy (None or 0.0) to catch Layout H.
+    if not total_score:
+        verdict = parsed.get("评审结论")
+        if isinstance(verdict, dict):
+            score_obj = verdict.get("综合评分")
+            if isinstance(score_obj, dict):
+                # Extract 加权总分 (weighted total score).
+                weighted = score_obj.get("加权总分")
+                if isinstance(weighted, (int, float)):
+                    total_score = float(weighted)
+                # Extract per-dimension scores (专业性/完整性/合理性/可操作性).
+                for dim_name, dim_val in score_obj.items():
+                    if dim_name == "加权总分":
+                        continue
+                    if isinstance(dim_val, (int, float)) and dim_val <= 100:
+                        clean_dims[dim_name] = float(dim_val)
+            # Also try 维度评审详情.<dim>.评分 for dimension scores
+            # (this is the authoritative per-dimension source in Layout H).
+            dim_detail = parsed.get("维度评审详情")
+            if isinstance(dim_detail, dict) and dim_detail:
+                for dim_key, dim_val in dim_detail.items():
+                    if isinstance(dim_val, dict):
+                        dv = dim_val.get("评分") or dim_val.get("得分") or dim_val.get("score")
+                        if isinstance(dv, (int, float)) and dv <= 100:
+                            # Use short name (strip leading "一、"/"二、" etc.)
+                            short = re.sub(r"^[一二三四五六七八九十]+[、.\s]*", "", dim_key)
+                            clean_dims[short] = float(dv)
+
+    # --- Layout I: MiniMax-M3 with 综合评估 wrapper -------------------------
+    # Structure: {"综合评估": {"总分": 73, "总评": "...", "优点": [...], "主要缺陷": [...]}}
+    # The total_score from Layout H check above may still be 0.0 if the
+    # Chinese verdict key was 综合评估 instead of 评审结论.
+    if not total_score:
+        overall_zh = parsed.get("综合评估")
+        if isinstance(overall_zh, dict):
+            for zk in ("总分", "加权总分", "综合分", "综合得分", "总分值"):
+                zv = overall_zh.get(zk)
+                if isinstance(zv, (int, float)):
+                    total_score = float(zv)
+                    break
+            # Lift 总评 into summary for conclusion fallback.
+            zp = overall_zh.get("总评")
+            if isinstance(zp, str) and "summary" not in parsed:
+                parsed["summary"] = zp
+
+    # --- Layout J: verdict dict (MiniMax-M3 with nested wrapper) -----------
+    # Structure: {wrapper: {dimension_scores, verdict: {result, rationale}}}
+    # If total_score is still falsy but dimension_scores exist, compute average.
+    if not total_score and clean_dims:
+        dim_vals = [v for v in clean_dims.values() if isinstance(v, (int, float)) and v > 0]
+        if dim_vals:
+            total_score = sum(dim_vals) / len(dim_vals)
+
     # --- conclusion --------------------------------------------------------
-    conclusion = parsed.get("conclusion", lifted.get("conclusion", ""))
+    # Support both English "conclusion" and Chinese "结论" keys.
+    conclusion = parsed.get("conclusion") or parsed.get("结论") or lifted.get("conclusion", "")
+    # Layout E (MiniMax-M3 detailed review): conclusion is a dict like
+    # {"release_readiness": "NOT READY"/"READY", "blockers": [...],
+    #  "summary": "..."}. Render it as readable text.
+    # Layout F: conclusion is a Chinese-keyed dict like
+    # {"总体评价": "...", "发布建议": "...", "风险等级": "..."}.
+    conclusion_blockers: list[str] = []
+    if isinstance(conclusion, dict):
+        # Layout E (English keys).
+        readiness = conclusion.get("release_readiness") or conclusion.get("status") or ""
+        blockers = conclusion.get("blockers") or conclusion.get("blocking_issues") or []
+        summary_text = conclusion.get("summary") or conclusion.get("description") or ""
+        parts: list[str] = []
+        if readiness:
+            parts.append(f"release_readiness: {readiness}")
+        if isinstance(blockers, list):
+            conclusion_blockers = [str(b) for b in blockers if b]
+            if conclusion_blockers:
+                parts.append("blockers:")
+                for b in conclusion_blockers:
+                    parts.append(f"  - {b}")
+        if summary_text:
+            parts.append(f"summary: {summary_text}")
+        # Layout F (Chinese keys): extract 总体评价/发布建议/风险等级.
+        # Layout I (Chinese keys): extract 报告可用性/建议/总评.
+        # Layout J (English keys): extract result/rationale (verdict dict).
+        if not parts:
+            for ck in ("总体评价", "发布建议", "风险等级", "总结", "评审结论",
+                       "报告可用性", "建议", "总评",
+                       "result", "rationale", "verdict"):
+                cv = conclusion.get(ck)
+                if isinstance(cv, str) and cv.strip():
+                    parts.append(f"{ck}: {cv.strip()}")
+                elif isinstance(cv, list):
+                    # Some LLMs put issue list under these keys.
+                    if ck in ("发布建议", "建议"):
+                        for it in cv:
+                            if isinstance(it, str) and it.strip():
+                                parts.append(f"  - {it.strip()}")
+        # Reviewer notes / 评审人员备注.
+        reviewer_notes = conclusion.get("评审人员备注") or conclusion.get("备注") or ""
+        if isinstance(reviewer_notes, str) and reviewer_notes.strip() and reviewer_notes.strip() not in "\n".join(parts):
+            parts.append(f"评审人员备注: {reviewer_notes.strip()}")
+        conclusion = "\n".join(parts) if parts else _to_text(conclusion)
+
+    # Top-level Chinese conclusion keys (when "conclusion" itself is missing
+    # but 总体评价 / 发布建议 exist at top level).
+    if not conclusion:
+        top_conclusion_parts: list[str] = []
+        for ck in ("总体评价", "发布建议", "风险等级", "总结", "评审结论"):
+            cv = parsed.get(ck)
+            if isinstance(cv, str) and cv.strip():
+                top_conclusion_parts.append(f"{ck}: {cv.strip()}")
+        if top_conclusion_parts:
+            conclusion = "\n".join(top_conclusion_parts)
+
+    # Top-level reviewer notes.
+    if not conclusion:
+        rn = parsed.get("评审人员备注") or parsed.get("备注")
+        if isinstance(rn, str) and rn.strip():
+            conclusion = f"评审人员备注: {rn.strip()}"
     if not conclusion:
         # Layout B: overall_score.summary holds the prose conclusion.
         if isinstance(overall, dict):
             conclusion = overall.get("summary", "")
+    if not conclusion:
+        # Layout H: 评审结论.综合评级 + 评审结论.一句话结论.
+        verdict = parsed.get("评审结论")
+        if isinstance(verdict, dict):
+            vh_parts: list[str] = []
+            grade = verdict.get("综合评级")
+            if isinstance(grade, str) and grade.strip():
+                vh_parts.append(f"综合评级: {grade.strip()}")
+            one_line = verdict.get("一句话结论")
+            if isinstance(one_line, str) and one_line.strip():
+                vh_parts.append(f"结论: {one_line.strip()}")
+            if vh_parts:
+                conclusion = "\n".join(vh_parts)
+    if not conclusion:
+        # Layout J: top-level verdict dict {result, rationale}.
+        top_verdict = parsed.get("verdict")
+        if isinstance(top_verdict, dict):
+            tv_parts: list[str] = []
+            for vk in ("result", "rationale", "verdict", "结论"):
+                vv = top_verdict.get(vk)
+                if isinstance(vv, str) and vv.strip():
+                    tv_parts.append(f"{vk}: {vv.strip()}")
+            if tv_parts:
+                conclusion = "\n".join(tv_parts)
     if not conclusion:
         # Layout C: review_summary.conclusion (already lifted into parsed).
         conclusion = parsed.get("summary", "")
@@ -471,6 +698,194 @@ def _normalize_review_payload(parsed: dict) -> dict:
     # --- suggestions & risk_points ----------------------------------------
     suggestions = parsed.get("suggestions", lifted.get("suggestions", ""))
     risk_points = parsed.get("risk_points", lifted.get("risk_points", ""))
+
+    # Layout E: priority_recommendations (list[str]) -> suggestions.
+    if not suggestions:
+        recs = parsed.get("priority_recommendations") or parsed.get("recommendations")
+        if isinstance(recs, list):
+            rec_lines = []
+            for r in recs:
+                if isinstance(r, str) and r.strip():
+                    rec_lines.append(f"- {r.strip()}")
+                elif isinstance(r, dict):
+                    pri = r.get("priority") or r.get("priority_level") or ""
+                    items = r.get("items") or r.get("recommendations") or []
+                    if isinstance(items, list):
+                        for it in items:
+                            if isinstance(it, str) and it.strip():
+                                tag = f"[{pri}] " if pri else ""
+                                rec_lines.append(f"- {tag}{it.strip()}")
+                    elif isinstance(r.get("description"), str):
+                        tag = f"[{pri}] " if pri else ""
+                        rec_lines.append(f"- {tag}{r['description'].strip()}")
+            if rec_lines:
+                suggestions = "\n".join(rec_lines)
+
+    # Layout E: positive_findings -> prepend to suggestions.
+    positives = parsed.get("positive_findings") or parsed.get("strengths")
+    if isinstance(positives, list) and positives:
+        pos_lines = []
+        for p in positives:
+            if isinstance(p, str) and p.strip():
+                pos_lines.append(f"+ {p.strip()}")
+            elif isinstance(p, dict):
+                desc = p.get("description") or p.get("summary") or ""
+                if desc:
+                    pos_lines.append(f"+ {desc}")
+        if pos_lines:
+            prefix = "positive findings:\n" + "\n".join(pos_lines) + "\n\n"
+            suggestions = prefix + (suggestions if isinstance(suggestions, str) else "")
+
+    # Layout E: cross_cutting_issues (list[dict]) -> risk_points.
+    if not risk_points:
+        cross = parsed.get("cross_cutting_issues") or parsed.get("cross_cutting")
+        if isinstance(cross, list):
+            cross_lines = []
+            for c in cross:
+                if not isinstance(c, dict):
+                    continue
+                cid = c.get("id") or ""
+                sev = c.get("severity") or ""
+                cat = c.get("category") or ""
+                desc = c.get("description") or c.get("issue") or ""
+                tag = f"[{sev}]" if sev else ""
+                cid_tag = f"[{cid}]" if cid else ""
+                cat_tag = f"[{cat}]" if cat else ""
+                prefix_parts = [p for p in [tag, cid_tag, cat_tag] if p]
+                prefix_str = " ".join(prefix_parts) + " " if prefix_parts else ""
+                if desc:
+                    cross_lines.append(f"{prefix_str}{desc}")
+            if cross_lines:
+                risk_points = "\n".join(cross_lines)
+
+    # Layout E: conclusion.blockers -> prepend to risk_points.
+    if conclusion_blockers:
+        blockers_text = "blockers (from conclusion):\n" + "\n".join(
+            f"  - {b}" for b in conclusion_blockers
+        )
+        risk_points = (blockers_text + "\n\n" + risk_points) if risk_points else blockers_text
+
+    # Layout E/F: if no total_score was found but we have issue counts,
+    # estimate a score based on issue severity.
+    if total_score == 0.0:
+        # Count issues by severity from various sources.
+        all_issues = []
+        for src_key in ("issues", "critical_issues", "risks", "blockers",
+                          "findings", "defects", "cross_cutting_issues"):
+            src = parsed.get(src_key)
+            if isinstance(src, list):
+                all_issues.extend(src)
+
+        # Layout F: Chinese-keyed top-level dimensions. Each value is a dict
+        # containing sub-categories like "重大问题", "亮点", "改进建议".
+        # Treat these as dimension metadata and harvest nested issue lists.
+        chinese_severity_map = {
+            "重大问题": "critical", "严重问题": "critical", "阻塞发布": "critical",
+            "高优先级": "high", "高": "high",
+            "中优先级": "medium", "中": "medium", "中等": "medium",
+            "低优先级": "low", "低": "low",
+            "立即改进": "high", "短期改进": "medium", "中长期改进": "low",
+            "改进建议": "medium", "建议": "low",
+            "问题": "medium", "亮点": None,
+        }
+        chinese_conclusion_keys = ("结论", "总结", "评审结论", "总体评价", "发布建议", "风险等级")
+        chinese_conclusion_parts: list[str] = []
+
+        # Iterate top-level keys to find Chinese dimension dicts.
+        for top_key, top_val in list(parsed.items()):
+            if not isinstance(top_val, dict):
+                continue
+            # Skip known English structural keys.
+            if top_key in ("overall_assessment", "overall_score", "overall_rating",
+                            "review_summary", "review_metadata", "metadata",
+                            "conclusion", "summary", "files", "file_level_findings"):
+                continue
+            # Layout F: extract conclusion sub-fields from "结论" dict.
+            if top_key in chinese_conclusion_keys:
+                for ck in ("总体评价", "发布建议", "风险等级", "summary", "description"):
+                    cv = top_val.get(ck)
+                    if isinstance(cv, str) and cv.strip():
+                        chinese_conclusion_parts.append(f"{ck}: {cv.strip()}")
+                continue
+            # Otherwise, treat as a dimension with Chinese-named sub-categories.
+            dim_score_val = None
+            for sk in ("score", "rating", "得分", "评分"):
+                sv = top_val.get(sk)
+                if isinstance(sv, (int, float)):
+                    dim_score_val = float(sv)
+                    break
+            if dim_score_val is not None:
+                # Scale 0-10 up to 0-100.
+                if dim_score_val <= 10:
+                    dim_score_val = dim_score_val * 10.0
+                clean_dims[top_key] = dim_score_val
+            # Collect nested issue lists.
+            for sub_key, sub_val in top_val.items():
+                if not isinstance(sub_val, list):
+                    continue
+                sev = chinese_severity_map.get(sub_key)
+                for it in sub_val:
+                    if isinstance(it, str) and it.strip():
+                        all_issues.append({
+                            "severity": sev or "medium",
+                            "description": it.strip(),
+                            "category": top_key,
+                        })
+                    elif isinstance(it, dict):
+                        enriched = dict(it)
+                        if "severity" not in enriched and sev:
+                            enriched["severity"] = sev
+                        if "category" not in enriched and top_key:
+                            enriched["category"] = top_key
+                        all_issues.append(enriched)
+
+        # If conclusion was empty, use Layout F chinese_conclusion_parts.
+        if not conclusion and chinese_conclusion_parts:
+            conclusion = "\n".join(chinese_conclusion_parts)
+
+        # Also count from dimension_scores metadata.
+        for meta in dim_meta.values():
+            if isinstance(meta, dict):
+                for k in ("issues", "critical_issues", "risks", "blockers"):
+                    v = meta.get(k)
+                    if isinstance(v, list):
+                        all_issues.extend(v)
+        if all_issues:
+            critical_count = 0
+            high_count = 0
+            medium_count = 0
+            low_count = 0
+            for issue in all_issues:
+                if isinstance(issue, dict):
+                    sev_raw = (issue.get("severity") or issue.get("level") or "").lower()
+                    # Map both English and Chinese severities.
+                    sev_aliases = {
+                        "critical": "critical", "blocker": "critical", "fatal": "critical",
+                        "严重": "critical", "致命": "critical", "阻塞": "critical",
+                        "high": "high", "高": "high", "高优先级": "high",
+                        "medium": "medium", "中": "medium", "中等": "medium",
+                        "low": "low", "低": "low", "低优先级": "low",
+                    }
+                    sev = sev_aliases.get(sev_raw, sev_raw)
+                    if sev in ("critical", "blocker", "fatal"):
+                        critical_count += 1
+                    elif sev == "high":
+                        high_count += 1
+                    elif sev == "medium":
+                        medium_count += 1
+                    elif sev == "low":
+                        low_count += 1
+            # Start from 100 and deduct based on severity.
+            # Heuristic: critical=20pts, high=10pts, medium=5pts, low=2pts.
+            # Floor at 0. This is a fallback when LLM did not provide a score.
+            estimated = 100 - (critical_count * 20 + high_count * 10
+                                + medium_count * 5 + low_count * 2)
+            if estimated < 0:
+                estimated = 0
+            # Only use estimated if we actually found issues (avoid false 100).
+            if critical_count + high_count + medium_count + low_count > 0:
+                total_score = float(estimated)
+                # Note: dimension_scores stay empty since LLM didn't provide per-dim scores.
 
     # Collect from nested dimension metadata if top-level fields are empty.
     if not suggestions and dim_meta:
@@ -498,6 +913,123 @@ def _normalize_review_payload(parsed: dict) -> dict:
                         _append_issue(parts, dim_name, issue)
         if parts:
             risk_points = "\n".join(parts)
+
+    # Layout H/I/J: 对原报告的改进建议 / 对报告的改进建议 / improvement_recommendations.
+    if not suggestions:
+        layout_h_recs = (parsed.get("对原报告的改进建议")
+                         or parsed.get("对报告的改进建议")
+                         or parsed.get("改进建议")
+                         or parsed.get("improvement_recommendations"))
+        rec_lines = []
+        if isinstance(layout_h_recs, list):
+            # Layout H: list of dicts [{类别, 优先级, 建议}].
+            # Layout J: list of dicts [{priority, item, suggestion}].
+            for r in layout_h_recs:
+                if isinstance(r, dict):
+                    cat = r.get("类别") or r.get("category") or ""
+                    pri = r.get("优先级") or r.get("priority") or ""
+                    # Description: try 建议 first (Chinese), then item+suggestion (English).
+                    desc = (r.get("建议") or r.get("description")
+                           or r.get("suggestion") or "")
+                    item_text = r.get("item") or ""
+                    if not desc and item_text:
+                        desc = item_text
+                        # If suggestion is separate, append it.
+                        sug = r.get("suggestion") or ""
+                        if sug and sug != desc:
+                            desc = f"{desc} → {sug}"
+                    if desc:
+                        tag_parts = []
+                        if cat:
+                            tag_parts.append(cat)
+                        if pri:
+                            tag_parts.append(pri)
+                        tag = f"[{','.join(tag_parts)}] " if tag_parts else ""
+                        rec_lines.append(f"- {tag}{desc.strip()}")
+                elif isinstance(r, str) and r.strip():
+                    rec_lines.append(f"- {r.strip()}")
+        elif isinstance(layout_h_recs, dict):
+            # Layout I/J: dict of category -> list (strings or dicts).
+            for cat, items in layout_h_recs.items():
+                if isinstance(items, list):
+                    for it in items:
+                        if isinstance(it, str) and it.strip():
+                            rec_lines.append(f"- [{cat}] {it.strip()}")
+                        elif isinstance(it, dict):
+                            # Dict with priority/item/suggestion OR 类别/建议.
+                            pri = it.get("优先级") or it.get("priority") or ""
+                            item_text = it.get("item") or it.get("项目") or ""
+                            desc = (it.get("建议") or it.get("description")
+                                   or it.get("suggestion") or "")
+                            if not desc and item_text:
+                                desc = item_text
+                                sug = it.get("suggestion") or ""
+                                if sug and sug != desc:
+                                    desc = f"{desc} → {sug}"
+                            if desc:
+                                tag = f"[{cat},{pri}] " if pri else f"[{cat}] "
+                                rec_lines.append(f"- {tag}{desc.strip()}")
+        if rec_lines:
+            suggestions = "\n".join(rec_lines)
+
+    # Layout H/I: 原报告Top 5待改进项 + 维度评审详情.<dim>.不足 lists.
+    # Also captures Layout I's 综合评估.主要缺陷.
+    if not risk_points:
+        rh_risks: list[str] = []
+        # Top-level list of improvement items.
+        top_improvements = parsed.get("原报告Top 5待改进项") or parsed.get("待改进项")
+        if isinstance(top_improvements, list):
+            for it in top_improvements:
+                if isinstance(it, str) and it.strip():
+                    rh_risks.append(it.strip())
+        # Layout I: 综合评估.主要缺陷 list.
+        overall_zh = parsed.get("综合评估")
+        if isinstance(overall_zh, dict):
+            main_defects = overall_zh.get("主要缺陷") or overall_zh.get("缺陷") or []
+            if isinstance(main_defects, list):
+                for d in main_defects:
+                    if isinstance(d, str) and d.strip():
+                        rh_risks.append(d.strip())
+                    elif isinstance(d, dict):
+                        desc = d.get("description") or d.get("summary") or ""
+                        if desc:
+                            rh_risks.append(desc)
+        # Per-dimension 不足 (shortcomings) lists.
+        dim_detail = parsed.get("维度评审详情")
+        if isinstance(dim_detail, dict):
+            for dim_key, dim_val in dim_detail.items():
+                if isinstance(dim_val, dict):
+                    shortcomings = dim_val.get("不足") or dim_val.get("issues") or []
+                    if isinstance(shortcomings, list):
+                        for sc in shortcomings:
+                            if isinstance(sc, str) and sc.strip():
+                                rh_risks.append(f"[{dim_key}] {sc.strip()}")
+                            elif isinstance(sc, dict):
+                                desc = sc.get("description") or sc.get("summary") or ""
+                                if desc:
+                                    rh_risks.append(f"[{dim_key}] {desc}")
+        if rh_risks:
+            risk_points = "\n".join(rh_risks)
+
+    # Layout J: key_findings dict (logic_issues / missing_elements / compliance_gaps).
+    if not risk_points:
+        kf = parsed.get("key_findings")
+        if isinstance(kf, dict):
+            kf_risks: list[str] = []
+            for sub_key in ("logic_issues", "missing_elements", "compliance_gaps",
+                            "critical_issues", "risks", "blockers"):
+                items = kf.get(sub_key)
+                if isinstance(items, list):
+                    for it in items:
+                        if isinstance(it, str) and it.strip():
+                            kf_risks.append(f"[{sub_key}] {it.strip()}")
+                        elif isinstance(it, dict):
+                            desc = (it.get("description") or it.get("summary")
+                                   or it.get("item") or "")
+                            if desc:
+                                kf_risks.append(f"[{sub_key}] {desc}")
+            if kf_risks:
+                risk_points = "\n".join(kf_risks)
 
     # Layouts C & D: top-level issues / critical_issues / risks arrays.
     # critical_issues -> risk_points; other issues -> suggestions.
@@ -598,6 +1130,7 @@ def parse_llm_review_result(content: Optional[str]) -> dict:
     # minimax-M3 / DeepSeek-R1. If the closing tag is missing (output was
     # truncated mid-thought), drop everything from <think> to the end.
     text = _THINK_BLOCK_RE.sub("", text).strip()
+    text = _HTML_THINK_BLOCK_RE.sub("", text).strip()
     if not text:
         return _default_failed_result("LLM 返回内容仅含 <think> 推理块")
 

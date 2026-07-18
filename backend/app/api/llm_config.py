@@ -153,8 +153,8 @@ async def update_llm_model(
     return LLMModelResponse.model_validate(model)
 
 
-@router.delete(
-    "/models/{model_id}",
+@router.post(
+    "/models/{model_id}/disable",
     response_model=LLMModelResponse,
     dependencies=[Depends(_SUPER_ADMIN)],
 )
@@ -190,6 +190,102 @@ async def disable_llm_model(
     )
 
     return LLMModelResponse.model_validate(model)
+
+
+@router.post(
+    "/models/{model_id}/enable",
+    response_model=LLMModelResponse,
+    dependencies=[Depends(_SUPER_ADMIN)],
+)
+async def enable_llm_model(
+    model_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(_SUPER_ADMIN),
+):
+    """Re-enable a previously disabled LLM model (SUPER_ADMIN only)."""
+    result = await db.execute(select(LLMModel).where(LLMModel.id == model_id))
+    model = result.scalar_one_or_none()
+    if model is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="LLM model not found",
+        )
+
+    model.is_active = True
+    await db.commit()
+    await db.refresh(model)
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="enable_llm_model",
+        resource_type="llm_model",
+        resource_id=str(model.id),
+        details={"is_active": True},
+    )
+
+    return LLMModelResponse.model_validate(model)
+
+
+@router.delete(
+    "/models/{model_id}",
+    response_model=dict,
+    dependencies=[Depends(_SUPER_ADMIN)],
+)
+async def delete_llm_model(
+    model_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(_SUPER_ADMIN),
+):
+    """Physically delete an LLM model (SUPER_ADMIN only).
+
+    Refuses if the model is still referenced by any review rule.
+    Historical LLMReview records are preserved because ``model_used``
+    is a free-form string, not a foreign key.
+    """
+    result = await db.execute(select(LLMModel).where(LLMModel.id == model_id))
+    model = result.scalar_one_or_none()
+    if model is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="LLM model not found",
+        )
+
+    # Check if referenced by any review rule (as llm_model or fallback_model)
+    rules_result = await db.execute(
+        select(ReviewRule).where(
+            (ReviewRule.llm_model_id == model_id)
+            | (ReviewRule.fallback_model_id == model_id)
+        )
+    )
+    referenced_rules = rules_result.scalars().all()
+    if referenced_rules:
+        rule_ids = [str(r.id) for r in referenced_rules]
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot delete model '{model.name}' because it is referenced by "
+                f"{len(referenced_rules)} review rule(s): {rule_ids}. "
+                "Please reassign or delete those rules first."
+            ),
+        )
+
+    # Snapshot for audit log
+    snapshot = {"id": str(model.id), "name": model.name, "model_name": model.model_name}
+
+    await db.delete(model)
+    await db.commit()
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="delete_llm_model",
+        resource_type="llm_model",
+        resource_id=str(model_id),
+        details=snapshot,
+    )
+
+    return {"deleted": True, "id": str(model_id), "name": snapshot["name"]}
 
 
 # ---------------------------------------------------------------------------
@@ -343,3 +439,54 @@ async def update_review_rule(
     )
 
     return ReviewRuleResponse.model_validate(rule)
+
+
+@router.delete(
+    "/rules/{rule_id}",
+    response_model=dict,
+    dependencies=[Depends(_SUPER_ADMIN)],
+)
+async def delete_review_rule(
+    rule_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(_SUPER_ADMIN),
+):
+    """Physically delete a review rule (SUPER_ADMIN only).
+
+    Historical LLMReview records are not affected because they store
+    ``review_type`` as a string, not a foreign key to the rule.
+    """
+    result = await db.execute(
+        select(ReviewRule)
+        .options(
+            selectinload(ReviewRule.llm_model),
+            selectinload(ReviewRule.fallback_model),
+        )
+        .where(ReviewRule.id == rule_id)
+    )
+    rule = result.scalar_one_or_none()
+    if rule is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Review rule not found",
+        )
+
+    snapshot = {
+        "id": str(rule.id),
+        "review_type": rule.review_type.value if rule.review_type else None,
+        "llm_model_id": str(rule.llm_model_id) if rule.llm_model_id else None,
+    }
+
+    await db.delete(rule)
+    await db.commit()
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="delete_review_rule",
+        resource_type="review_rule",
+        resource_id=str(rule_id),
+        details=snapshot,
+    )
+
+    return {"deleted": True, "id": str(rule_id)}

@@ -5,10 +5,13 @@ import {
   getModels,
   createModel,
   updateModel,
+  disableModel,
+  enableModel,
   deleteModel,
   getRules,
   createRule,
   updateRule,
+  deleteRule,
 } from '@/api/llmConfig'
 import { reviewTypeLabel } from '@/utils/status'
 import type {
@@ -207,18 +210,67 @@ async function handleModelSubmit() {
   })
 }
 
+async function handleModelDisable(row: LLMModel) {
+  try {
+    await ElMessageBox.confirm(
+      `确认禁用模型「${row.name}」吗？禁用后历史评审记录仍可追溯，且可随时重新启用。`,
+      '禁用确认',
+      { type: 'warning' },
+    )
+    await disableModel(row.id)
+    ElMessage.success('模型已禁用')
+    await loadModels()
+  } catch (err: any) {
+    if (err !== 'cancel' && err?.message !== 'cancel') {
+      ElMessage.error(err?.response?.data?.detail || '禁用失败')
+    }
+  }
+}
+
+async function handleModelEnable(row: LLMModel) {
+  try {
+    await enableModel(row.id)
+    ElMessage.success('模型已启用')
+    await loadModels()
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || '启用失败')
+  }
+}
+
 async function handleModelDelete(row: LLMModel) {
   try {
-    await ElMessageBox.confirm(`确定要禁用模型「${row.name}」吗？`, '提示', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
+    await ElMessageBox.confirm(
+      `确认「物理删除」模型「${row.name}」吗？\n\n` +
+      '物理删除不可恢复。若该模型被评审规则引用将拒绝删除。\n' +
+      '历史评审记录不受影响（model_used 为字符串字段，非外键）。',
+      '物理删除确认',
+      { type: 'error', confirmButtonText: '确认删除', cancelButtonText: '取消' },
+    )
     await deleteModel(row.id)
-    ElMessage.success('已禁用')
+    ElMessage.success('模型已物理删除')
     await loadModels()
-  } catch {
-    // 取消或错误
+  } catch (err: any) {
+    if (err !== 'cancel' && err?.message !== 'cancel') {
+      ElMessage.error(err?.response?.data?.detail || '删除失败')
+    }
+  }
+}
+
+async function handleRuleDelete(row: ReviewRule) {
+  try {
+    await ElMessageBox.confirm(
+      `确认「物理删除」此评审规则吗？\n类型: ${reviewTypeLabel(row.review_type)}\n\n` +
+      '物理删除不可恢复。历史评审记录不受影响。',
+      '删除评审规则',
+      { type: 'error', confirmButtonText: '确认删除', cancelButtonText: '取消' },
+    )
+    await deleteRule(row.id)
+    ElMessage.success('评审规则已删除')
+    await loadRules()
+  } catch (err: any) {
+    if (err !== 'cancel' && err?.message !== 'cancel') {
+      ElMessage.error(err?.response?.data?.detail || '删除失败')
+    }
   }
 }
 
@@ -390,7 +442,19 @@ onMounted(async () => {
         <el-table-column label="操作" width="160" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="openModelEdit(row)">编辑</el-button>
-            <el-button type="danger" link @click="handleModelDelete(row)">禁用</el-button>
+            <el-button
+              v-if="row.is_active"
+              type="warning"
+              link
+              @click="handleModelDisable(row)"
+            >禁用</el-button>
+            <el-button
+              v-else
+              type="success"
+              link
+              @click="handleModelEnable(row)"
+            >启用</el-button>
+            <el-button type="danger" link @click="handleModelDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -430,6 +494,7 @@ onMounted(async () => {
         <el-table-column label="操作" width="100" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="openRuleEdit(row)">编辑</el-button>
+            <el-button type="danger" link @click="handleRuleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

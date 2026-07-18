@@ -28,8 +28,18 @@ export function updateModel(id: string, data: LLMModelUpdate): Promise<LLMModel>
   return request.put(`/llm-config/models/${id}`, data)
 }
 
-/** 禁用 LLM 模型 */
-export function deleteModel(id: string): Promise<LLMModel> {
+/** 禁用 LLM 模型（软删除，保留历史记录可追溯） */
+export function disableModel(id: string): Promise<LLMModel> {
+  return request.post(`/llm-config/models/${id}/disable`)
+}
+
+/** 启用 LLM 模型（恢复已禁用的模型） */
+export function enableModel(id: string): Promise<LLMModel> {
+  return request.post(`/llm-config/models/${id}/enable`)
+}
+
+/** 物理删除 LLM 模型（不可恢复；若被评审规则引用则拒绝） */
+export function deleteModel(id: string): Promise<{ deleted: boolean; id: string; name: string }> {
   return request.delete(`/llm-config/models/${id}`)
 }
 
@@ -48,4 +58,10 @@ export function createRule(data: ReviewRuleCreate): Promise<ReviewRule> {
 /** 更新评审规则 */
 export function updateRule(id: string, data: ReviewRuleUpdate): Promise<ReviewRule> {
   return request.put(`/llm-config/rules/${id}`, data)
+}
+
+
+/** 物理删除评审规则（不可恢复） */
+export function deleteRule(id: string): Promise<{ deleted: boolean; id: string }> {
+  return request.delete(`/llm-config/rules/${id}`)
 }

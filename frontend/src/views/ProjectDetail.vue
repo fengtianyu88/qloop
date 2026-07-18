@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { getProject, addMember, createVersion } from '@/api/projects'
+import { getReleasesByVersion } from '@/api/releases'
 import { getUsers } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
 import { roleLabel } from '@/utils/status'
@@ -34,6 +35,19 @@ const versions = ref<Version[]>([])
 const isPm = computed(
   () => project.value?.pm_user_id === authStore.user?.id || authStore.isAdmin,
 )
+
+async function viewRelease(versionId: string) {
+  try {
+    const releases = await getReleasesByVersion(versionId)
+    if (releases && releases.length > 0) {
+      router.push(`/releases/${releases[0].id}`)
+    } else {
+      ElMessage.warning('该版本暂无释放记录')
+    }
+  } catch {
+    ElMessage.error('获取释放列表失败')
+  }
+}
 
 function userName(id: string | null | undefined): string {
   if (!id) return '—'
@@ -264,6 +278,11 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="170">
           <template #default="{ row }">{{ row.created_at?.replace('T', ' ').slice(0, 19) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="140" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link @click="viewRelease(row.id)">查看释放</el-button>
+          </template>
         </el-table-column>
       </el-table>
       <el-empty v-if="versions.length === 0" description="暂无版本，创建版本后将在此展示" />
