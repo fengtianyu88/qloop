@@ -386,7 +386,10 @@ build_frontend() {
     cd "$INSTALL_DIR/frontend"
     npm install --silent 2>/dev/null
     # 修复权限: npm install 以 root 运行, 但 build 以 RUN_USER 运行
+    # 必须在 npm install 之后执行, 并确保 .tmp 目录可写 (vue-tsc 需要写入 tsbuildinfo)
     chown -R "$RUN_USER:$RUN_GROUP" "$INSTALL_DIR/frontend"
+    mkdir -p "$INSTALL_DIR/frontend/node_modules/.tmp"
+    chown -R "$RUN_USER:$RUN_GROUP" "$INSTALL_DIR/frontend/node_modules/.tmp"
 
     # 通过环境变量向 Vite 注入应用名称 (构建期静态内联到产物中)
     # 部署者在配置区修改 APP_NAME / APP_SHORT_NAME 即可同步更新网页标题
@@ -394,17 +397,27 @@ build_frontend() {
     export VITE_APP_SHORT_NAME="$APP_SHORT_NAME"
     log "前端标题注入: VITE_APP_TITLE='$APP_NAME', VITE_APP_SHORT_NAME='$APP_SHORT_NAME'"
 
-    # 构建生产版本
-    sudo -u "$RUN_USER" \
+    # 构建生产版本 (不抑制 stderr, 失败时立即终止)
+    if ! sudo -u "$RUN_USER" \
         VITE_APP_TITLE="$APP_NAME" \
         VITE_APP_SHORT_NAME="$APP_SHORT_NAME" \
-        bash -c "cd $INSTALL_DIR/frontend && npm run build" 2>/dev/null
+        bash -c "cd $INSTALL_DIR/frontend && npm run build"; then
+        err "前端构建失败 (npm run build), 请检查上方输出"
+        err "常见原因: node_modules/.tmp 权限不足 / TypeScript 类型错误 / 依赖缺失"
+        return 1
+    fi
 
     # 复制到 Nginx 目录
     mkdir -p /var/www/qloop
+    rm -rf /var/www/qloop/*
     cp -r dist/* /var/www/qloop/
     chown -R www-data:www-data /var/www/qloop 2>/dev/null || \
         chown -R nginx:nginx /var/www/qloop 2>/dev/null || true
+
+    # 校验 HTML 标题占位符已被 Vite 替换
+    if grep -q '%VITE_APP_TITLE%' /var/www/qloop/index.html; then
+        warn "index.html 仍含 %VITE_APP_TITLE% 占位符, Vite 环境变量替换未生效"
+    fi
 
     log "前端构建完成, 产物部署到 /var/www/qloop"
 }
