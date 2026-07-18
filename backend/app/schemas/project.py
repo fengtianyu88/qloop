@@ -102,10 +102,22 @@ class ReleaseResponse(BaseModel):
     code_package_path: Optional[str] = None
     test_report_path: Optional[str] = None
     review_report_path: Optional[str] = None
+    # Uploader info for each artifact (SOX audit traceability).
+    code_package_uploaded_by: Optional[uuid.UUID] = None
+    code_package_uploaded_at: Optional[datetime] = None
+    test_report_uploaded_by: Optional[uuid.UUID] = None
+    test_report_uploaded_at: Optional[datetime] = None
+    review_report_uploaded_by: Optional[uuid.UUID] = None
+    review_report_uploaded_at: Optional[datetime] = None
+    # Convenience display names (populated by join).
+    code_package_uploader_name: Optional[str] = None
+    test_report_uploader_name: Optional[str] = None
+    review_report_uploader_name: Optional[str] = None
     download_link: Optional[str] = None
     link_expiry: Optional[datetime] = None
     confirmed_by: Optional[uuid.UUID] = None
     confirmed_at: Optional[datetime] = None
+    confirmed_by_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -121,10 +133,20 @@ class ReleaseListResponse(BaseModel):
     code_package_path: Optional[str] = None
     test_report_path: Optional[str] = None
     review_report_path: Optional[str] = None
+    code_package_uploaded_by: Optional[uuid.UUID] = None
+    code_package_uploaded_at: Optional[datetime] = None
+    test_report_uploaded_by: Optional[uuid.UUID] = None
+    test_report_uploaded_at: Optional[datetime] = None
+    review_report_uploaded_by: Optional[uuid.UUID] = None
+    review_report_uploaded_at: Optional[datetime] = None
+    code_package_uploader_name: Optional[str] = None
+    test_report_uploader_name: Optional[str] = None
+    review_report_uploader_name: Optional[str] = None
     download_link: Optional[str] = None
     link_expiry: Optional[datetime] = None
     confirmed_by: Optional[uuid.UUID] = None
     confirmed_at: Optional[datetime] = None
+    confirmed_by_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

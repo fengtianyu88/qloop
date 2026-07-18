@@ -163,10 +163,21 @@ export interface Release {
   code_package_path: string | null
   test_report_path: string | null
   review_report_path: string | null
+  // Uploader info for each artifact (SOX audit traceability).
+  code_package_uploaded_by: string | null
+  code_package_uploaded_at: string | null
+  test_report_uploaded_by: string | null
+  test_report_uploaded_at: string | null
+  review_report_uploaded_by: string | null
+  review_report_uploaded_at: string | null
+  code_package_uploader_name: string | null
+  test_report_uploader_name: string | null
+  review_report_uploader_name: string | null
   download_link: string | null
   link_expiry: string | null
   confirmed_by: string | null
   confirmed_at: string | null
+  confirmed_by_name: string | null
   created_at: string
   updated_at: string
 }
@@ -199,6 +210,7 @@ export interface LLMReview {
   raw_response: string | null
   model_used: string | null
   triggered_by: string
+  triggered_by_name: string | null
   created_at: string
   completed_at: string | null
 }

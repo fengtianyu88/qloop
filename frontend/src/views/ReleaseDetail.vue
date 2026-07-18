@@ -9,6 +9,7 @@ import {
   uploadTestReport,
   uploadReviewReport,
   confirmRelease,
+  downloadArtifact,
 } from '@/api/releases'
 import { getReleaseReviews, triggerReview } from '@/api/reviews'
 import { useAuthStore } from '@/stores/auth'
@@ -193,10 +194,20 @@ function openLink(link: string) {
   window.open(downloadUrl(link), '_blank')
 }
 
-// 下载单个交付物（代码包/测试报告/评审报告）：
-// 后端 GET /api/releases/{id}/download/{file_type} 会 302 重定向到 MinIO 预签名 URL
-function downloadArtifact(fileType: 'code_package' | 'test_report' | 'review_report') {
-  window.open(`/api/releases/${releaseId.value}/download/${fileType}`, '_blank')
+// 下载单个交付物（代码包/测试报告/评审报告）
+// 使用 axios blob 方式下载（自动携带 Authorization header）
+const downloading = ref<string>('')
+
+async function downloadArtifactFile(fileType: 'code_package' | 'test_report' | 'review_report') {
+  downloading.value = fileType
+  try {
+    await downloadArtifact(releaseId.value, fileType)
+    ElMessage.success('下载已开始')
+  } catch {
+    // 错误已统一提示
+  } finally {
+    downloading.value = ''
+  }
 }
 
 function formatTime(t: string | null): string {
@@ -282,9 +293,33 @@ onMounted(async () => {
           </el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ formatTime(release.created_at) }}</el-descriptions-item>
           <el-descriptions-item label="确认人">
-            <span class="mono-id">{{ release.confirmed_by || '—' }}</span>
+            <span v-if="release.confirmed_by_name">{{ release.confirmed_by_name }}</span>
+            <span v-else class="mono-id">{{ release.confirmed_by || '—' }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="确认时间">{{ formatTime(release.confirmed_at) }}</el-descriptions-item>
+        </el-descriptions>
+      </el-card>
+
+
+      <!-- 各节点上传人/触发人 -->
+      <el-card class="table-card" shadow="never">
+        <template #header><span>节点操作人</span></template>
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="代码包上传人">
+            <span v-if="release.code_package_uploader_name">{{ release.code_package_uploader_name }}</span>
+            <span v-else class="mono-id">{{ release.code_package_uploaded_by || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="代码包上传时间">{{ formatTime(release.code_package_uploaded_at) }}</el-descriptions-item>
+          <el-descriptions-item label="测试报告上传人">
+            <span v-if="release.test_report_uploader_name">{{ release.test_report_uploader_name }}</span>
+            <span v-else class="mono-id">{{ release.test_report_uploaded_by || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="测试报告上传时间">{{ formatTime(release.test_report_uploaded_at) }}</el-descriptions-item>
+          <el-descriptions-item label="评审报告上传人">
+            <span v-if="release.review_report_uploader_name">{{ release.review_report_uploader_name }}</span>
+            <span v-else class="mono-id">{{ release.review_report_uploaded_by || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="评审报告上传时间">{{ formatTime(release.review_report_uploaded_at) }}</el-descriptions-item>
         </el-descriptions>
       </el-card>
 
@@ -401,6 +436,7 @@ onMounted(async () => {
               <el-tag :type="reviewResultTagType(r.result)">{{ reviewResultLabel(r.result) }}</el-tag>
               <span class="review-round">第 {{ r.review_round }} 轮</span>
               <span class="review-model" v-if="r.model_used">模型：{{ r.model_used }}</span>
+              <span class="review-trigger" v-if="r.triggered_by">触发人：{{ r.triggered_by_name || r.triggered_by.slice(0,8) }}</span>
               <span class="review-time">{{ formatTime(r.created_at) }}</span>
             </div>
 
@@ -458,14 +494,14 @@ onMounted(async () => {
               <el-button v-if="release.download_link" type="primary" @click="openLink(release.download_link)">
                 <el-icon><Download /></el-icon>下载交付包
               </el-button>
-              <el-button v-if="release.code_package_path" @click="downloadArtifact('code_package')">
-                代码包
+              <el-button v-if="release.code_package_path" :loading="downloading === 'code_package'" @click="downloadArtifactFile('code_package')">
+                <el-icon><Download /></el-icon>代码包
               </el-button>
-              <el-button v-if="release.test_report_path" @click="downloadArtifact('test_report')">
-                测试报告
+              <el-button v-if="release.test_report_path" :loading="downloading === 'test_report'" @click="downloadArtifactFile('test_report')">
+                <el-icon><Download /></el-icon>测试报告
               </el-button>
-              <el-button v-if="release.review_report_path" @click="downloadArtifact('review_report')">
-                评审报告
+              <el-button v-if="release.review_report_path" :loading="downloading === 'review_report'" @click="downloadArtifactFile('review_report')">
+                <el-icon><Download /></el-icon>评审报告
               </el-button>
               <span v-if="release.link_expiry" class="expiry-text">
                 链接有效期至：{{ formatTime(release.link_expiry) }}

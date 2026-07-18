@@ -34,6 +34,7 @@ async def upload_code_package(
     file_name: str,
     content_type: str,
     change_notes: Optional[str] = None,
+    user_id: Optional[uuid.UUID] = None,
 ) -> Optional[Release]:
     """Upload a code package to MinIO and update the release status.
 
@@ -59,6 +60,9 @@ async def upload_code_package(
     release.status = ReleaseStatus.CODE_PENDING_REVIEW
     if change_notes is not None:
         release.change_notes = change_notes
+    if user_id is not None:
+        release.code_package_uploaded_by = user_id
+        release.code_package_uploaded_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(release)
@@ -71,6 +75,7 @@ async def upload_test_report(
     file_data: bytes,
     file_name: str,
     content_type: str,
+    user_id: Optional[uuid.UUID] = None,
 ) -> Optional[Release]:
     """Upload a test report to MinIO and update the release status.
 
@@ -93,6 +98,9 @@ async def upload_test_report(
 
     release.test_report_path = object_name
     release.status = ReleaseStatus.TEST_PENDING_REVIEW
+    if user_id is not None:
+        release.test_report_uploaded_by = user_id
+        release.test_report_uploaded_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(release)
@@ -105,6 +113,7 @@ async def upload_review_report(
     file_data: bytes,
     file_name: str,
     content_type: str,
+    user_id: Optional[uuid.UUID] = None,
 ) -> Optional[Release]:
     """Upload a review/expert report to MinIO and update the release status.
 
@@ -127,6 +136,9 @@ async def upload_review_report(
 
     release.review_report_path = object_name
     release.status = ReleaseStatus.EXPERT_PENDING_REVIEW
+    if user_id is not None:
+        release.review_report_uploaded_by = user_id
+        release.review_report_uploaded_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(release)

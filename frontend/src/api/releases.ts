@@ -47,3 +47,48 @@ export function uploadReviewReport(id: string, file: File): Promise<Release> {
 export function confirmRelease(id: string): Promise<Release> {
   return request.post(`/releases/${id}/confirm`)
 }
+
+/** 下载交付物（代码包/测试报告/评审报告）
+ *
+ * 后端 GET /api/releases/{id}/download/{file_type} 会 302 重定向到 MinIO 预签名 URL。
+ * 注意：window.open 不会携带 Authorization header，所以这里通过 axios 请求获取 blob，
+ * 然后创建 object URL 触发浏览器原生下载对话框。
+ */
+export async function downloadArtifact(
+  id: string,
+  fileType: 'code_package' | 'test_report' | 'review_report',
+): Promise<void> {
+  const response = await request.get(`/releases/${id}/download/${fileType}`, {
+    responseType: 'blob',
+    // axios 会自动跟随 302 重定向并下载最终内容
+  })
+  // 从响应头提取文件名
+  let fileName = `${fileType}`
+  const contentDisposition = response.headers?.['content-disposition']
+  if (contentDisposition) {
+    const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?(["']?)([^;"']+)\1/i)
+    if (match && match[2]) {
+      fileName = decodeURIComponent(match[2])
+    }
+  } else {
+    // 根据文件类型给默认扩展名
+    const extMap: Record<string, string> = {
+      code_package: '.zip',
+      test_report: '.md',
+      review_report: '.md',
+    }
+    fileName = fileType + (extMap[fileType] || '')
+  }
+
+  // 创建下载链接
+  const blob = new Blob([response.data || response])
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.URL.revokeObjectURL(url)
+}
+

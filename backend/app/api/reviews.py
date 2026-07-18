@@ -87,6 +87,24 @@ async def _get_release_and_check_access(
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+async def _enrich_reviews_with_names(
+    db: AsyncSession, reviews: list
+) -> list:
+    """Populate triggered_by_name on each LLMReviewResponse."""
+    from sqlalchemy import select as _select
+    from app.models.user import User
+
+    user_ids = {r.triggered_by for r in reviews if r.triggered_by}
+    if not user_ids:
+        return reviews
+    result = await db.execute(_select(User).where(User.id.in_(user_ids)))
+    users = {u.id: u.username for u in result.scalars().all()}
+    for r in reviews:
+        if r.triggered_by and r.triggered_by in users:
+            r.triggered_by_name = users[r.triggered_by]
+    return reviews
+
 @router.get(
     "/release/{release_id}",
     response_model=List[LLMReviewResponse],
@@ -105,7 +123,8 @@ async def list_release_reviews(
         .order_by(LLMReview.created_at.desc())
     )
     reviews = result.scalars().all()
-    return [LLMReviewResponse.model_validate(r) for r in reviews]
+    resp = [LLMReviewResponse.model_validate(r) for r in reviews]
+    return await _enrich_reviews_with_names(db, resp)
 
 
 @router.post(

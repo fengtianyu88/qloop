@@ -13,6 +13,7 @@ import {
 import { reviewTypeLabel } from '@/utils/status'
 import type {
   LLMModel,
+  LLMProtocol,
   LLMModelCreate,
   LLMModelUpdate,
   ReviewRule,
@@ -42,6 +43,76 @@ const protocolOptions: { label: string; value: string }[] = [
   { label: 'OpenAI 兼容 (/chat/completions)', value: 'openai' },
   { label: 'Anthropic 原生 (/v1/messages)', value: 'anthropic' },
 ]
+
+
+// 预设模型模板 - 一键填充常见模型配置
+const presetModels: { label: string; name: string; protocol: LLMProtocol; api_base: string; model_name: string; note?: string }[] = [
+  {
+    label: 'MiniMax-M3 (OpenAI)',
+    name: 'MiniMax-M3',
+    protocol: 'openai',
+    api_base: 'https://api.minimaxi.com/v1',
+    model_name: 'MiniMax-M3',
+  },
+  {
+    label: 'MiniMax-M2.7 (OpenAI)',
+    name: 'MiniMax-M2.7',
+    protocol: 'openai',
+    api_base: 'https://api.minimaxi.com/v1',
+    model_name: 'MiniMax-Text-01',
+  },
+  {
+    label: 'GLM-5.2 (OpenAI)',
+    name: 'GLM-5.2',
+    protocol: 'openai',
+    api_base: 'https://open.bigmodel.cn/api/paas/v4',
+    model_name: 'glm-5-plus',
+  },
+  {
+    label: 'DeepSeek-V4-flash (OpenAI)',
+    name: 'DeepSeek-V4-flash',
+    protocol: 'openai',
+    api_base: 'https://api.deepseek.com/v1',
+    model_name: 'deepseek-chat',
+  },
+  {
+    label: 'Claude Sonnet 4.5 (Anthropic)',
+    name: 'Claude Sonnet 4.5',
+    protocol: 'anthropic',
+    api_base: 'https://api.anthropic.com',
+    model_name: 'claude-sonnet-4-5-20250929',
+  },
+  {
+    label: 'Claude Opus 4 (Anthropic)',
+    name: 'Claude Opus 4',
+    protocol: 'anthropic',
+    api_base: 'https://api.anthropic.com',
+    model_name: 'claude-opus-4-20250514',
+  },
+  {
+    label: 'OpenAI GPT-4o (OpenAI)',
+    name: 'GPT-4o',
+    protocol: 'openai',
+    api_base: 'https://api.openai.com/v1',
+    model_name: 'gpt-4o',
+  },
+  {
+    label: '本地 Ollama (OpenAI 兼容)',
+    name: 'Ollama (本地)',
+    protocol: 'openai',
+    api_base: 'http://localhost:11434/v1',
+    model_name: 'qwen2.5:14b',
+  },
+]
+
+function applyPreset(preset: { name: string; protocol: LLMProtocol; api_base: string; model_name: string }) {
+  modelForm.name = preset.name
+  modelForm.protocol = preset.protocol
+  modelForm.api_base = preset.api_base
+  modelForm.model_name = preset.model_name
+  // 不覆盖 api_key，让用户自己填
+}
+
 const modelRules: FormRules = {
   name: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
   protocol: [{ required: true, message: '请选择接口协议', trigger: 'change' }],
@@ -372,6 +443,20 @@ onMounted(async () => {
       class="dialog-scroll"
     >
       <el-form ref="modelFormRef" :model="modelForm" :rules="modelRules" label-width="100px">
+        <el-form-item label="快速预设">
+          <el-select
+            placeholder="选择预设模板自动填充"
+            style="width: 100%"
+            @change="(val: string) => { const p = presetModels.find(m => m.label === val); if (p) applyPreset(p) }"
+          >
+            <el-option
+              v-for="p in presetModels"
+              :key="p.label"
+              :label="p.label"
+              :value="p.label"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="名称" prop="name">
           <el-input v-model="modelForm.name" placeholder="模型显示名称" />
         </el-form-item>
@@ -388,14 +473,14 @@ onMounted(async () => {
         <el-form-item label="API 地址" prop="api_base">
           <el-input
             v-model="modelForm.api_base"
-            :placeholder="modelForm.protocol === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.example.com/v1'"
+            :placeholder="modelForm.protocol === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1 或 https://api.minimaxi.com/v1 或 http://localhost:11434/v1'"
           />
         </el-form-item>
         <el-form-item label="API Key" prop="api_key">
           <el-input v-model="modelForm.api_key" show-password placeholder="sk-..." />
         </el-form-item>
         <el-form-item label="模型标识" prop="model_name">
-          <el-input v-model="modelForm.model_name" placeholder="如 gpt-4o" />
+          <el-input v-model="modelForm.model_name" placeholder="如 gpt-4o / claude-sonnet-4-5 / MiniMax-M3 / glm-5-plus / deepseek-chat" />
         </el-form-item>
         <el-form-item label="优先级" prop="priority">
           <el-input-number v-model="modelForm.priority" :min="1" :max="99" />

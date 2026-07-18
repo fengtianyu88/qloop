@@ -472,6 +472,75 @@ PYEOF
     log "LLM 模型种子完成"
 }
 
+# 执行数据库迁移 (新增字段/索引等, 幂等)
+run_migrations() {
+    log "执行数据库迁移 (幂等) ..."
+
+    cd "$INSTALL_DIR/backend"
+    sudo -u "$RUN_USER" "$VENV_DIR/bin/python" <<'PYMIGRATE'
+import asyncio
+from sqlalchemy import text
+from app.database import engine
+
+MIGRATIONS = [
+    # v1.2.0: 为 releases 表添加上传人/上传时间字段 (SOX 审计追溯)
+    ("releases_code_package_uploaded_by",
+     "ALTER TABLE releases ADD COLUMN IF NOT EXISTS code_package_uploaded_by UUID REFERENCES users(id)"),
+    ("releases_code_package_uploaded_at",
+     "ALTER TABLE releases ADD COLUMN IF NOT EXISTS code_package_uploaded_at TIMESTAMPTZ"),
+    ("releases_test_report_uploaded_by",
+     "ALTER TABLE releases ADD COLUMN IF NOT EXISTS test_report_uploaded_by UUID REFERENCES users(id)"),
+    ("releases_test_report_uploaded_at",
+     "ALTER TABLE releases ADD COLUMN IF NOT EXISTS test_report_uploaded_at TIMESTAMPTZ"),
+    ("releases_review_report_uploaded_by",
+     "ALTER TABLE releases ADD COLUMN IF NOT EXISTS review_report_uploaded_by UUID REFERENCES users(id)"),
+    ("releases_review_report_uploaded_at",
+     "ALTER TABLE releases ADD COLUMN IF NOT EXISTS review_report_uploaded_at TIMESTAMPTZ"),
+]
+
+async def migrate():
+    async with engine.begin() as conn:
+        for name, sql in MIGRATIONS:
+            try:
+                await conn.execute(text(sql))
+                print(f"  OK: {name}")
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    print(f"  SKIP (exists): {name}")
+                else:
+                    print(f"  WARN: {name} -> {e}")
+
+        # Backfill uploaded_by from audit_logs (best-effort)
+        backfill_sqls = [
+            ("code_package", "upload_code_package"),
+            ("test_report", "upload_test_report"),
+            ("review_report", "upload_review_report"),
+        ]
+        for col, action in backfill_sqls:
+            try:
+                result = await conn.execute(text(f"""
+                    UPDATE releases r
+                    SET {col}_uploaded_by = a.user_id,
+                        {col}_uploaded_at = a.created_at
+                    FROM audit_logs a
+                    WHERE a.resource_id::text = r.id::text
+                      AND a.action = '{action}'
+                      AND r.{col}_path IS NOT NULL
+                      AND r.{col}_uploaded_by IS NULL
+                """))
+                if result.rowcount > 0:
+                    print(f"  BACKFILL: {col} ({result.rowcount} rows)")
+            except Exception as e:
+                print(f"  BACKFILL WARN: {col} -> {e}")
+
+    print("数据库迁移完成")
+
+asyncio.run(migrate())
+PYMIGRATE
+
+    log "数据库迁移完成"
+}
+
 # 构建前端
 build_frontend() {
     log "构建前端 ..."
@@ -843,6 +912,7 @@ main() {
     generate_env
     update_cors
     init_database
+    run_migrations
     seed_llm_models
     build_frontend
     setup_nginx

@@ -195,6 +195,25 @@ class Release(Base):
     review_report_path: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True
     )
+    # Track who uploaded each artifact and when (SOX audit requirement).
+    code_package_uploaded_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    code_package_uploaded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    test_report_uploaded_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    test_report_uploaded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    review_report_uploaded_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    review_report_uploaded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     download_link: Mapped[Optional[str]] = mapped_column(
         String(1000), nullable=True
     )
@@ -223,6 +242,15 @@ class Release(Base):
     )
     confirmer: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[confirmed_by]
+    )
+    code_package_uploader: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[code_package_uploaded_by]
+    )
+    test_report_uploader: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[test_report_uploaded_by]
+    )
+    review_report_uploader: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[review_report_uploaded_by]
     )
     llm_reviews: Mapped[List["LLMReview"]] = relationship(
         "LLMReview", back_populates="release", cascade="all, delete-orphan"

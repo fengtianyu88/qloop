@@ -82,5 +82,6 @@ class LLMReviewResponse(BaseModel):
     raw_response: Optional[str] = None
     model_used: Optional[str] = None
     triggered_by: uuid.UUID
+    triggered_by_name: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None

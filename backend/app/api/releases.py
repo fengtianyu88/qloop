@@ -74,6 +74,41 @@ async def _get_release_with_project_access(
     return release
 
 
+
+async def _enrich_release_response(
+    db: AsyncSession, release: Release, response: ReleaseResponse
+) -> ReleaseResponse:
+    """Populate uploader/confirmer display names on a ReleaseResponse.
+
+    This is a post-validation step that joins the user names for display in
+    the UI without forcing N+1 queries at the schema level.
+    """
+    from sqlalchemy import select as _select
+    from app.models.user import User
+
+    user_ids = {
+        response.code_package_uploaded_by,
+        response.test_report_uploaded_by,
+        response.review_report_uploaded_by,
+        response.confirmed_by,
+    }
+    user_ids.discard(None)
+    if not user_ids:
+        return response
+
+    result = await db.execute(_select(User).where(User.id.in_(user_ids)))
+    users = {u.id: u for u in result.scalars().all()}
+
+    if response.code_package_uploaded_by and response.code_package_uploaded_by in users:
+        response.code_package_uploader_name = users[response.code_package_uploaded_by].username
+    if response.test_report_uploaded_by and response.test_report_uploaded_by in users:
+        response.test_report_uploader_name = users[response.test_report_uploaded_by].username
+    if response.review_report_uploaded_by and response.review_report_uploaded_by in users:
+        response.review_report_uploader_name = users[response.review_report_uploaded_by].username
+    if response.confirmed_by and response.confirmed_by in users:
+        response.confirmed_by_name = users[response.confirmed_by].username
+    return response
+
 @router.get("/{release_id}", response_model=ReleaseResponse)
 async def get_release(
     release_id: uuid.UUID,
@@ -82,7 +117,8 @@ async def get_release(
 ):
     """Get a release by ID."""
     release = await _get_release_with_project_access(db, release_id, current_user)
-    return ReleaseResponse.model_validate(release)
+    response = ReleaseResponse.model_validate(release)
+    return await _enrich_release_response(db, release, response)
 
 
 @router.post("/{release_id}/code-package", response_model=ReleaseResponse)
@@ -110,6 +146,7 @@ async def upload_code_package_endpoint(
         file_name=file.filename or "code_package",
         content_type=content_type,
         change_notes=change_notes,
+        user_id=current_user.id,
     )
 
     await create_audit_log(
@@ -121,7 +158,8 @@ async def upload_code_package_endpoint(
         details={"file_name": file.filename, "change_notes": change_notes},
     )
 
-    return ReleaseResponse.model_validate(release)
+    response = ReleaseResponse.model_validate(release)
+    return await _enrich_release_response(db, release, response)
 
 
 @router.post("/{release_id}/test-report", response_model=ReleaseResponse)
@@ -147,6 +185,7 @@ async def upload_test_report_endpoint(
         file_data=file_data,
         file_name=file.filename or "test_report",
         content_type=content_type,
+        user_id=current_user.id,
     )
 
     await create_audit_log(
@@ -158,7 +197,8 @@ async def upload_test_report_endpoint(
         details={"file_name": file.filename},
     )
 
-    return ReleaseResponse.model_validate(release)
+    response = ReleaseResponse.model_validate(release)
+    return await _enrich_release_response(db, release, response)
 
 
 @router.post("/{release_id}/review-report", response_model=ReleaseResponse)
@@ -184,6 +224,7 @@ async def upload_review_report_endpoint(
         file_data=file_data,
         file_name=file.filename or "review_report",
         content_type=content_type,
+        user_id=current_user.id,
     )
 
     await create_audit_log(
@@ -195,7 +236,8 @@ async def upload_review_report_endpoint(
         details={"file_name": file.filename},
     )
 
-    return ReleaseResponse.model_validate(release)
+    response = ReleaseResponse.model_validate(release)
+    return await _enrich_release_response(db, release, response)
 
 
 @router.post("/{release_id}/confirm", response_model=ReleaseResponse)
@@ -244,7 +286,8 @@ async def confirm_release_endpoint(
         details={"status": release.status.value},
     )
 
-    return ReleaseResponse.model_validate(release)
+    response = ReleaseResponse.model_validate(release)
+    return await _enrich_release_response(db, release, response)
 
 
 # Mapping from URL file_type segment to the Release column storing the
@@ -260,6 +303,7 @@ _FILE_TYPE_TO_FIELD = {
 async def download_release_artifact(
     release_id: uuid.UUID,
     file_type: str,
+    token: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -267,6 +311,10 @@ async def download_release_artifact(
 
     file_type must be one of: code_package, test_report, review_report.
     The URL is short-lived (1 hour) to avoid leaking long-lived links.
+
+    The endpoint accepts a ``token`` query parameter as a fallback to the
+    Authorization header, so that browser-initiated downloads (e.g.
+    ``window.open``) can still authenticate.
     """
     if file_type not in _FILE_TYPE_TO_FIELD:
         raise HTTPException(
@@ -294,5 +342,15 @@ async def download_release_artifact(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate download URL: {exc}",
         )
+
+    # Record the download in audit log (SOX: who downloaded what, when).
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="download_artifact",
+        resource_type="release",
+        resource_id=str(release_id),
+        details={"file_type": file_type, "object_name": object_name},
+    )
 
     return RedirectResponse(url=presigned_url, status_code=status.HTTP_302_FOUND)
