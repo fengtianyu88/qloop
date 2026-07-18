@@ -12,6 +12,7 @@ from app.schemas.project import (
     ProjectCreate,
     ProjectMemberCreate,
     ProjectMemberResponse,
+    ProjectMemberUpdate,
     ProjectResponse,
     VersionCreate,
     VersionResponse,
@@ -22,8 +23,10 @@ from app.services.project_service import (
     add_project_member,
     create_project,
     create_version,
+    delete_project_member,
     get_project_by_id,
     get_projects_for_user,
+    update_project_member,
 )
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -145,6 +148,181 @@ async def add_member(
     )
 
     return ProjectMemberResponse.model_validate(member)
+
+
+@router.patch(
+    "/{project_id}/members/{member_id}",
+    response_model=ProjectMemberResponse,
+)
+async def update_member(
+    project_id: uuid.UUID,
+    member_id: uuid.UUID,
+    member_update: ProjectMemberUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update a project member's role.
+
+    Permission rules:
+    - super_admin / admin: can update any member, including the PM row.
+    - Project manager (PM): can update any member EXCEPT the PM row.
+    """
+    # Caller must be PM or admin
+    is_pm = await check_pm_permission(db, current_user, project_id)
+    if not is_pm:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the project manager or an admin can update members",
+        )
+
+    # Verify project exists and fetch pm_user_id
+    project = await get_project_by_id(db=db, project_id=project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    # Fetch the target member
+    from sqlalchemy import select
+    from app.models.project import ProjectMember
+    result = await db.execute(
+        select(ProjectMember).where(
+            ProjectMember.id == member_id,
+            ProjectMember.project_id == project_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project member not found",
+        )
+
+    # PM cannot modify the PM row; only admin/super_admin can.
+    is_admin = current_user.system_role in (
+        "admin",
+        "super_admin",
+    ) or getattr(current_user.system_role, "value", None) in (
+        "admin",
+        "super_admin",
+    )
+    if member.user_id == project.pm_user_id and not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project manager cannot modify the PM row; only an admin can",
+        )
+
+    try:
+        updated = await update_project_member(
+            db=db, member_id=member_id, member_update=member_update
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="update_project_member",
+        resource_type="project_member",
+        resource_id=str(updated.id),
+        details={
+            "project_id": str(project_id),
+            "user_id": str(updated.user_id),
+            "new_role": member_update.project_role.value
+            if hasattr(member_update.project_role, "value")
+            else str(member_update.project_role),
+        },
+    )
+
+    return ProjectMemberResponse.model_validate(updated)
+
+
+@router.delete(
+    "/{project_id}/members/{member_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_member(
+    project_id: uuid.UUID,
+    member_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove a project member.
+
+    Permission rules:
+    - super_admin / admin: can remove any member, including the PM row.
+    - Project manager (PM): can remove any member EXCEPT the PM row.
+    """
+    # Caller must be PM or admin
+    is_pm = await check_pm_permission(db, current_user, project_id)
+    if not is_pm:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the project manager or an admin can remove members",
+        )
+
+    # Verify project exists
+    project = await get_project_by_id(db=db, project_id=project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    # Fetch the target member
+    from sqlalchemy import select
+    from app.models.project import ProjectMember
+    result = await db.execute(
+        select(ProjectMember).where(
+            ProjectMember.id == member_id,
+            ProjectMember.project_id == project_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project member not found",
+        )
+
+    # PM cannot remove the PM row; only admin/super_admin can.
+    is_admin = current_user.system_role in (
+        "admin",
+        "super_admin",
+    ) or getattr(current_user.system_role, "value", None) in (
+        "admin",
+        "super_admin",
+    )
+    if member.user_id == project.pm_user_id and not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Project manager cannot remove the PM row; only an admin can",
+        )
+
+    deleted = await delete_project_member(db=db, member_id=member_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project member not found",
+        )
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="remove_project_member",
+        resource_type="project_member",
+        resource_id=str(member_id),
+        details={
+            "project_id": str(project_id),
+            "removed_user_id": str(member.user_id),
+        },
+    )
+
+    return None
 
 
 @router.post(

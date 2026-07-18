@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { getProject, addMember, createVersion } from '@/api/projects'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { getProject, addMember, updateMember, deleteMember, createVersion } from '@/api/projects'
 import { getReleasesByVersion } from '@/api/releases'
 import { getUsers } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
 import { roleLabel } from '@/utils/status'
 import type {
   Project,
+  ProjectMember,
   ProjectMemberCreate,
+  ProjectMemberUpdate,
   ProjectRole,
   User,
   Version,
@@ -137,6 +139,80 @@ async function handleAddMember() {
   })
 }
 
+// ------------------------- 编辑/删除成员 -------------------------
+const editDialogVisible = ref(false)
+const editFormRef = ref<FormInstance>()
+const editForm = reactive<{ id: string; user_id: string; project_role: ProjectRole }>({
+  id: '',
+  user_id: '',
+  project_role: 'developer',
+})
+const editRules: FormRules<{ project_role: ProjectRole }> = {
+  project_role: [{ required: true, message: '请选择角色', trigger: 'change' }],
+}
+const editSubmitting = ref(false)
+
+/** 当前用户是否可对该成员行执行编辑/删除操作。 */
+function canMutateMember(row: ProjectMember): boolean {
+  if (!project.value) return false
+  // 仅 PM（含 admin）可见按钮
+  if (!isPm.value) return false
+  // PM 不可改 PM 行，admin/super_admin 可改任意行
+  if (row.user_id === project.value.pm_user_id && !authStore.isAdmin) {
+    return false
+  }
+  return true
+}
+
+function openEditDialog(row: ProjectMember) {
+  editForm.id = row.id
+  editForm.user_id = row.user_id
+  editForm.project_role = row.project_role
+  editDialogVisible.value = true
+}
+
+async function handleEditMember() {
+  if (!editFormRef.value) return
+  await editFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    editSubmitting.value = true
+    try {
+      const payload: ProjectMemberUpdate = { project_role: editForm.project_role }
+      await updateMember(projectId.value, editForm.id, payload)
+      ElMessage.success('角色已更新')
+      editDialogVisible.value = false
+      await loadProject()
+    } catch {
+      // 错误已统一提示
+    } finally {
+      editSubmitting.value = false
+    }
+  })
+}
+
+async function handleDeleteMember(row: ProjectMember) {
+  try {
+    await ElMessageBox.confirm(
+      `确认从项目中移除成员「${userName(row.user_id)}」？`,
+      '移除成员',
+      {
+        confirmButtonText: '确定移除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return // 用户取消
+  }
+  try {
+    await deleteMember(projectId.value, row.id)
+    ElMessage.success('成员已移除')
+    await loadProject()
+  } catch {
+    // 错误已统一提示
+  }
+}
+
 // ------------------------- 创建版本 -------------------------
 const versionDialogVisible = ref(false)
 const versionFormRef = ref<FormInstance>()
@@ -246,6 +322,15 @@ onMounted(async () => {
             <el-tag>{{ roleLabel(row.project_role) }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="180" fixed="right">
+          <template #default="{ row }">
+            <template v-if="canMutateMember(row)">
+              <el-button type="primary" link size="small" @click="openEditDialog(row)">编辑角色</el-button>
+              <el-button type="danger" link size="small" @click="handleDeleteMember(row)">移除</el-button>
+            </template>
+            <span v-else class="muted-text">—</span>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
 
@@ -322,6 +407,36 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
+    <!-- 编辑成员角色对话框 -->
+    <el-dialog v-model="editDialogVisible" title="编辑成员角色" width="460px">
+      <el-form ref="editFormRef" :model="editForm" :rules="editRules" label-width="90px">
+        <el-form-item label="成员">
+          <span>{{ userName(editForm.user_id) }}</span>
+        </el-form-item>
+        <el-form-item label="项目角色" prop="project_role">
+          <el-select v-model="editForm.project_role" style="width: 100%">
+            <el-option
+              v-for="opt in roleOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-alert
+          v-if="editForm.user_id === project?.pm_user_id"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="该成员为当前项目经理；修改其角色将不会自动变更项目的 pm_user_id 字段。如需变更项目经理，请联系超级管理员或管理员。"
+        />
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editSubmitting" @click="handleEditMember">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 创建版本对话框 -->
     <el-dialog v-model="versionDialogVisible" title="创建版本" width="520px" class="dialog-scroll">
       <el-form ref="versionFormRef" :model="versionForm" :rules="versionRules" label-width="90px">
@@ -376,5 +491,9 @@ onMounted(async () => {
 :deep(.dialog-scroll .el-dialog__body) {
   max-height: 60vh;
   overflow-y: auto;
+}
+.muted-text {
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
 }
 </style>

@@ -7,6 +7,7 @@ import type {
   ProjectCreate,
   ProjectMember,
   ProjectMemberCreate,
+  ProjectMemberUpdate,
   Version,
   VersionCreate,
 } from '@/types'
@@ -26,12 +27,29 @@ export function getProject(id: string): Promise<Project> {
   return request.get(`/projects/${id}`)
 }
 
-/** 添加项目成员（PM） */
+/** 添加项目成员（PM/admin） */
 export function addMember(
   projectId: string,
   data: ProjectMemberCreate,
 ): Promise<ProjectMember> {
   return request.post(`/projects/${projectId}/members`, data)
+}
+
+/** 修改项目成员角色（PM/admin；PM 不可改 PM 行） */
+export function updateMember(
+  projectId: string,
+  memberId: string,
+  data: ProjectMemberUpdate,
+): Promise<ProjectMember> {
+  return request.patch(`/projects/${projectId}/members/${memberId}`, data)
+}
+
+/** 移除项目成员（PM/admin；PM 不可移除 PM 行） */
+export function deleteMember(
+  projectId: string,
+  memberId: string,
+): Promise<void> {
+  return request.delete(`/projects/${projectId}/members/${memberId}`)
 }
 
 /** 创建版本（PM） */

@@ -19,6 +19,12 @@ class ProjectMemberCreate(BaseModel):
     project_role: ProjectRole = ProjectRole.DEVELOPER
 
 
+class ProjectMemberUpdate(BaseModel):
+    """Schema for updating a project member's role."""
+
+    project_role: ProjectRole
+
+
 class ProjectMemberResponse(BaseModel):
     """Schema for project member responses."""
 

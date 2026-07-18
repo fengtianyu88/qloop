@@ -113,6 +113,11 @@ export interface ProjectMemberCreate {
   project_role?: ProjectRole
 }
 
+/** 更新成员请求（修改项目内角色） */
+export interface ProjectMemberUpdate {
+  project_role: ProjectRole
+}
+
 /** 项目 */
 export interface Project {
   id: string

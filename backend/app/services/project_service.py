@@ -15,7 +15,7 @@ from app.models.project import (
     ReleaseStatus,
     Version,
 )
-from app.schemas.project import ProjectCreate, ProjectMemberCreate, VersionCreate
+from app.schemas.project import ProjectCreate, ProjectMemberCreate, ProjectMemberUpdate, VersionCreate
 
 
 async def create_project(
@@ -131,6 +131,62 @@ async def add_project_member(
     await db.commit()
     await db.refresh(member)
     return member
+
+
+async def update_project_member(
+    db: AsyncSession,
+    member_id: uuid.UUID,
+    member_update: ProjectMemberUpdate,
+) -> ProjectMember:
+    """Update a project member's role.
+
+    Args:
+        db: The async database session.
+        member_id: The project member ID.
+        member_update: The update payload.
+
+    Returns:
+        The updated ProjectMember object.
+
+    Raises:
+        ValueError: If the member does not exist.
+    """
+    result = await db.execute(
+        select(ProjectMember).where(ProjectMember.id == member_id)
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        raise ValueError("Project member not found")
+
+    member.project_role = member_update.project_role
+    await db.commit()
+    await db.refresh(member)
+    return member
+
+
+async def delete_project_member(
+    db: AsyncSession,
+    member_id: uuid.UUID,
+) -> bool:
+    """Delete a project member.
+
+    Args:
+        db: The async database session.
+        member_id: The project member ID.
+
+    Returns:
+        True if deleted, False if not found.
+    """
+    result = await db.execute(
+        select(ProjectMember).where(ProjectMember.id == member_id)
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        return False
+
+    await db.delete(member)
+    await db.commit()
+    return True
 
 
 async def create_version(
