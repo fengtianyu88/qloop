@@ -100,7 +100,7 @@ def test_auth() -> None:
     client = httpx.Client(base_url=BASE, timeout=TIMEOUT)
 
     # 1.1 正确凭据登录
-    data = login(client, "admin", "Admin@123")
+    data = login(client, "admin", "admin123")
     check(s, "管理员登录成功", data is not None and "access_token" in data,
           detail=str(data)[:200] if data else "no token")
     admin_token = data["access_token"] if data else ""
@@ -1292,7 +1292,7 @@ def main() -> int:
 
     # 登录 admin
     client = httpx.Client(base_url=BASE, timeout=TIMEOUT)
-    admin_data = login(client, "admin", "Admin@123")
+    admin_data = login(client, "admin", "admin123")
     client.close()
     if not admin_data:
         print("[FATAL] admin 登录失败, 终止测试")

@@ -100,7 +100,7 @@ Read the **[Deployment Guide](docs/DEPLOYMENT.md)** for full deployment steps.
 After the first deployment, log in with:
 
 - Username: `admin`
-- Password: `Admin@123`
+- Password: `admin123`
 
 **Change the password immediately after login!**
 
