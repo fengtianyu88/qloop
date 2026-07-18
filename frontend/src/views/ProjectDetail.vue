@@ -66,7 +66,11 @@ async function loadProject() {
 }
 
 async function loadUsers() {
-  // 仅 admin / super_admin 可获取用户列表；失败则降级使用项目成员 ID
+  // 仅 admin / super_admin 可获取用户列表；其他角色直接使用空列表，userOptions 会降级到项目成员
+  if (!authStore.isAdmin) {
+    userList.value = []
+    return
+  }
   try {
     const res = await getUsers({ page: 1, page_size: 100 })
     userList.value = res.items

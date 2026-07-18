@@ -602,6 +602,20 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # index.html 不缓存，避免浏览器引用过期的 chunk 文件名导致模块加载失败
+    location = /index.html {
+        root /var/www/qloop;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        expires 0;
+    }
+
+    # 带 hash 的 chunk 文件可以长期缓存
+    location /assets/ {
+        root /var/www/qloop;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
     # API 反向代理到后端
     location /api/ {
         proxy_pass http://BACKEND_HOST:BACKEND_PORT;

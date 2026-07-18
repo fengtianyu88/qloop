@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 import { searchProjects, searchReleases } from '@/api/search'
 import { getUsers } from '@/api/users'
 import {
@@ -16,6 +17,7 @@ import type {
 } from '@/types'
 
 const router = useRouter()
+const authStore = useAuthStore()
 
 // 用户字典：用于将 pm_user_id 解析为用户名
 const userMap = ref<Record<string, User>>({})
@@ -173,6 +175,10 @@ function userName(id: string | null | undefined): string {
 }
 
 async function loadUsers() {
+  // 仅 ADMIN+ 角色才能调用 /api/users；其他角色直接使用空映射
+  if (!authStore.isAdmin) {
+    return
+  }
   try {
     const res = await getUsers({ page: 1, page_size: 100 })
     const map: Record<string, User> = {}

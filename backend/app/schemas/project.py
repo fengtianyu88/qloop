@@ -125,6 +125,8 @@ class ReleaseResponse(BaseModel):
 class ReleaseListResponse(BaseModel):
     """Schema for release list responses with associated fields."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: uuid.UUID
     version_id: uuid.UUID
     release_number: int
