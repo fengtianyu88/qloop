@@ -2,7 +2,7 @@
 
 > English | [简体中文](README_zh-CN.md)
 
-> Version: 1.1.0  Date: 2026-07-18
+> Version: 1.2.0  Date: 2026-07-18
 
 ## About the Name
 
@@ -103,6 +103,38 @@ After the first deployment, log in with:
 - Password: `Admin@123`
 
 **Change the password immediately after login!**
+
+## Changelog
+
+### v1.2.0 (2026-07-18) — Production-grade SOX compliance
+
+**P0 fixes (SOX audit traceability)**:
+- Release detail page now shows uploader/trigger for each node (code package / test report / review report uploader + LLM review trigger + release confirmer)
+- Fix 401 error on download buttons for code package / test report / review report (`window.open` doesn't carry token → switched to axios blob download)
+- Download endpoint now writes download audit log (SOX compliance)
+- Database adds 6 new `uploaded_by/uploaded_at` columns, backfilled from `audit_logs`
+
+**Multi-LLM protocol support**:
+- LLM config page adds 8 preset templates: MiniMax-M3/M2.7, GLM-5.2, DeepSeek-V4-flash (OpenAI protocol); Claude Sonnet 4.5, Claude Opus 4 (Anthropic protocol); GPT-4o, local Ollama
+- Backend `LLMProtocol` enum + `client.py` already supports OpenAI/Anthropic dual-protocol calls
+
+**Deployment script enhancement**:
+- `deploy.sh` adds `run_migrations()` idempotent migration function supporting `ALTER TABLE` + historical data backfill
+- Supports Ubuntu 20.04+/Debian 11+/CentOS 8+/RHEL 8+ (apt-get/dnf/yum auto-detection)
+
+### v1.1.0 (2026-07-18)
+
+- Initial production deployment
+- Fixed 6 functional bugs (review_rules model reference, Celery worker parser, LLM score threshold, doc_parser zip support, overall_rating field, dimension_thresholds dimension names)
+- One-click deployment script supports multi-LLM seeding and configurable backend address
+- MiniMax-M3 review parsing fix and multi-model support
+
+### v1.0.0 (2026-07-17)
+
+- Initial release
+- Quality 7-step release pipeline: draft → code_pending_review → test_pending_review → expert_pending_review → pending_confirm → released
+- FastAPI + Vue 3 + PostgreSQL + MinIO + Redis + Celery stack
+- LLM automated review, JWT auth, RBAC permissions, audit log
 
 ## License
 

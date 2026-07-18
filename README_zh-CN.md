@@ -2,7 +2,7 @@
 
 > [English](README.md) | 简体中文
 
-> 版本：1.1.0  日期：2026-07-18
+> 版本：1.2.0  日期：2026-07-18
 
 ## 品牌释义
 
@@ -103,6 +103,38 @@ qloop/
 - 密码：`Admin@123`
 
 **登录后请立即修改密码！**
+
+## 更新日志
+
+### v1.2.0 (2026-07-18) — 生产级 SOX 合规增强
+
+**P0 修复 (SOX 审计追溯)**:
+- Release 详情页显示每个节点的上传人/触发人（代码包/测试报告/评审报告上传人 + LLM 评审触发人 + 释放确认人）
+- 修复代码包/测试报告/评审报告下载按钮 401 错误（`window.open` 不携 token → 改用 axios blob 下载）
+- 下载端点添加下载审计日志（SOX 合规要求）
+- 数据库新增 6 个 `uploaded_by/uploaded_at` 字段，并从 `audit_logs` 回填历史数据
+
+**LLM 多协议支持**:
+- 前端 LLM 配置页新增 8 个预设模板：MiniMax-M3/M2.7、GLM-5.2、DeepSeek-V4-flash（OpenAI 协议）；Claude Sonnet 4.5、Claude Opus 4（Anthropic 协议）；GPT-4o、本地 Ollama
+- 后端 `LLMProtocol` enum + `client.py` 已支持 OpenAI/Anthropic 双协议调用
+
+**部署脚本增强**:
+- `deploy.sh` 新增 `run_migrations()` 幂等迁移函数，支持 `ALTER TABLE` + 历史数据回填
+- 支持 Ubuntu 20.04+/Debian 11+/CentOS 8+/RHEL 8+（apt-get/dnf/yum 自动识别）
+
+### v1.1.0 (2026-07-18)
+
+- 初始生产部署版本
+- 修复 6 个功能 Bug（review_rules 模型引用、Celery worker 解析器、LLM 评分阈值、doc_parser zip 支持、overall_rating 字段、dimension_thresholds 维度名）
+- 一键部署脚本支持多 LLM 种子与可配置后端地址
+- MiniMax-M3 评审解析修复并支持多模型
+
+### v1.0.0 (2026-07-17)
+
+- 首次发布
+- 质量 7 步释放流程：draft → code_pending_review → test_pending_review → expert_pending_review → pending_confirm → released
+- FastAPI + Vue 3 + PostgreSQL + MinIO + Redis + Celery 技术栈
+- LLM 自动化评审、JWT 认证、RBAC 权限、审计日志
 
 ## 许可证
 
