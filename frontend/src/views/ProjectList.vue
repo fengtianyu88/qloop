@@ -67,36 +67,78 @@ function goDetail(id: string) {
   router.push(`/projects/${id}`)
 }
 
-// ---- 列筛选：基于当前数据自动生成可选值 ----
-const pmFilterOptions = computed(() => {
-  const seen = new Map<string, string>()
-  projectList.value.forEach((p) => {
-    const label = p.pm_name || '—'
-    if (!seen.has(label)) seen.set(label, label)
-  })
-  return Array.from(seen.values()).map((v) => ({ text: v, value: v }))
+// ============== 列筛选 + 排序 ==============
+// 每列的筛选状态: { input: 自由文本, selected: 多选下拉 }
+type ColFilter = { input: string; selected: string[] }
+const colFilters = reactive<Record<string, ColFilter>>({
+  name: { input: '', selected: [] },
+  description: { input: '', selected: [] },
+  pm_name: { input: '', selected: [] },
+  member_count: { input: '', selected: [] },
+  status: { input: '', selected: [] },
+  created_at: { input: '', selected: [] },
+  latest_activity_at: { input: '', selected: [] },
 })
 
-const statusFilterOptions = [
-  { text: '活跃', value: 'active' },
-  { text: '停用', value: 'inactive' },
-]
-
-function pmFilterHandler(value: string, row: Project) {
-  return (row.pm_name || '—') === value
+// 取列显示文本（用于生成筛选项 + 应用筛选）
+function cellValue(row: Project, prop: string): string {
+  switch (prop) {
+    case 'pm_name':
+      return row.pm_name || '—'
+    case 'member_count':
+      return String(row.members?.length || 0)
+    case 'status':
+      return row.is_active ? '活跃' : '停用'
+    case 'created_at':
+      return row.created_at?.replace('T', ' ').slice(0, 19) || '—'
+    case 'latest_activity_at':
+      return row.latest_activity_at?.replace('T', ' ').slice(0, 19) || '—'
+    case 'description':
+      return row.description || '—'
+    default:
+      return String((row as any)[prop] ?? '')
+  }
 }
 
-function statusFilterHandler(value: string, row: Project) {
-  return (row.is_active ? 'active' : 'inactive') === value
+// 每列可选项（来自当前数据去重）
+function getOptions(prop: string): string[] {
+  const set = new Set<string>()
+  projectList.value.forEach((r) => set.add(cellValue(r, prop)))
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
 }
 
-function filterMethod(query: string, row: Project, column: { property: string }) {
-  const prop = column.property
-  if (!prop) return true
-  const v = (row as any)[prop]
-  if (v == null) return query === ''
-  return String(v).toLowerCase().includes(String(query).toLowerCase())
+// 应用筛选后的数据
+const filteredRows = computed(() => {
+  return projectList.value.filter((row) => {
+    for (const prop of Object.keys(colFilters)) {
+      const f = colFilters[prop]
+      const v = cellValue(row, prop)
+      // 自由文本：包含匹配
+      if (f.input && !v.toLowerCase().includes(f.input.toLowerCase())) {
+        return false
+      }
+      // 多选下拉：选中为空表示不过滤；否则必须命中
+      if (f.selected.length > 0 && !f.selected.includes(v)) {
+        return false
+      }
+    }
+    return true
+  })
+})
+
+function clearColFilter(prop: string) {
+  colFilters[prop].input = ''
+  colFilters[prop].selected = []
 }
+
+function clearAllFilters() {
+  Object.keys(colFilters).forEach((k) => clearColFilter(k))
+}
+
+// 是否有任意列处于激活筛选状态（用于显示清除按钮）
+const hasActiveFilter = computed(() =>
+  Object.values(colFilters).some((f) => f.input || f.selected.length > 0),
+)
 
 // 排序比较器：支持字符串 / 时间 / 数字
 function genericCompare(a: Project, b: Project, prop: string): number {
@@ -105,7 +147,6 @@ function genericCompare(a: Project, b: Project, prop: string): number {
   if (va == null && vb == null) return 0
   if (va == null) return -1
   if (vb == null) return 1
-  // 时间戳
   if (typeof va === 'string' && typeof vb === 'string' &&
       /\d{4}-\d{2}-\d{2}T/.test(va) && /\d{4}-\d{2}-\d{2}T/.test(vb)) {
     return va.localeCompare(vb)
@@ -123,109 +164,355 @@ onMounted(() => {
   <div class="page-container">
     <div class="list-header">
       <h2 class="page-title">项目管理</h2>
-      <el-button
-        v-if="authStore.isDeveloper"
-        type="primary"
-        @click="openCreateDialog"
-      >
-        <el-icon><Plus /></el-icon>创建项目
-      </el-button>
+      <div class="list-header-actions">
+        <el-button
+          v-if="hasActiveFilter"
+          type="info"
+          size="small"
+          @click="clearAllFilters"
+        >
+          <el-icon><Close /></el-icon>清除筛选
+        </el-button>
+        <el-button
+          v-if="authStore.isDeveloper"
+          type="primary"
+          @click="openCreateDialog"
+        >
+          <el-icon><Plus /></el-icon>创建项目
+        </el-button>
+      </div>
     </div>
 
     <el-card class="table-card" shadow="never">
       <el-table
-        :data="projectList"
+        :data="filteredRows"
         v-loading="loading"
         border
         stripe
         :default-sort="{ prop: 'created_at', order: 'descending' }"
       >
+        <!-- 项目名称 -->
         <el-table-column
           prop="name"
           label="项目名称"
-          min-width="180"
+          min-width="200"
           show-overflow-tooltip
           sortable
-          :filters="[]"
-          :filter-method="(v: string, r: Project) => filterMethod(String(v), r, { property: 'name' })"
-          filter-placement="bottom-end"
         >
-          <template #header="{ column }">
-            <div class="col-header">
+          <template #header>
+            <div class="col-with-filter">
               <span>项目名称</span>
-              <el-input
-                v-model="(column as any).filterValue"
-                placeholder="筛选"
-                size="small"
-                clearable
-                style="width: 100px; margin-left: 4px"
-                @input="() => { if (!(column as any).filteredValue) (column as any).filteredValue = []; (column as any).filteredValue = [(column as any).filterValue || ''] }"
-              />
+              <el-popover trigger="click" placement="bottom" :width="240">
+                <template #reference>
+                  <el-button class="filter-icon-btn" link @click.stop>
+                    <el-icon class="filter-icon" :class="{ active: colFilters.name.input || colFilters.name.selected.length }">
+                      <Filter />
+                    </el-icon>
+                  </el-button>
+                </template>
+                <div class="filter-pop">
+                  <el-input
+                    v-model="colFilters.name.input"
+                    placeholder="搜索（自由输入）"
+                    size="small"
+                    clearable
+                  />
+                  <el-divider class="filter-divider" />
+                  <div class="filter-options">
+                    <el-checkbox-group v-model="colFilters.name.selected">
+                      <el-checkbox
+                        v-for="opt in getOptions('name')"
+                        :key="opt"
+                        :label="opt"
+                        :value="opt"
+                      >
+                        {{ opt }}
+                      </el-checkbox>
+                    </el-checkbox-group>
+                  </div>
+                  <div class="filter-actions">
+                    <el-button size="small" @click="clearColFilter('name')">清空</el-button>
+                  </div>
+                </div>
+              </el-popover>
             </div>
           </template>
         </el-table-column>
+
+        <!-- 描述 -->
         <el-table-column
           prop="description"
           label="描述"
           min-width="220"
           show-overflow-tooltip
           sortable
+          :sort-method="(a: Project, b: Project) => genericCompare(a, b, 'description')"
         >
+          <template #header>
+            <div class="col-with-filter">
+              <span>描述</span>
+              <el-popover trigger="click" placement="bottom" :width="240">
+                <template #reference>
+                  <el-button class="filter-icon-btn" link @click.stop>
+                    <el-icon class="filter-icon" :class="{ active: colFilters.description.input || colFilters.description.selected.length }">
+                      <Filter />
+                    </el-icon>
+                  </el-button>
+                </template>
+                <div class="filter-pop">
+                  <el-input v-model="colFilters.description.input" placeholder="搜索（自由输入）" size="small" clearable />
+                  <el-divider class="filter-divider" />
+                  <div class="filter-options">
+                    <el-checkbox-group v-model="colFilters.description.selected">
+                      <el-checkbox
+                        v-for="opt in getOptions('description')"
+                        :key="opt"
+                        :label="opt"
+                        :value="opt"
+                      >
+                        {{ opt }}
+                      </el-checkbox>
+                    </el-checkbox-group>
+                  </div>
+                  <div class="filter-actions">
+                    <el-button size="small" @click="clearColFilter('description')">清空</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </div>
+          </template>
           <template #default="{ row }">{{ row.description || '—' }}</template>
         </el-table-column>
+
+        <!-- 项目经理 -->
         <el-table-column
           label="项目经理"
-          width="160"
+          width="180"
           sortable
-          :filters="pmFilterOptions"
-          :filter-method="pmFilterHandler"
-          filter-placement="bottom-end"
+          :sort-method="(a: Project, b: Project) => String(a.pm_name || '').localeCompare(String(b.pm_name || ''))"
         >
+          <template #header>
+            <div class="col-with-filter">
+              <span>项目经理</span>
+              <el-popover trigger="click" placement="bottom" :width="240">
+                <template #reference>
+                  <el-button class="filter-icon-btn" link @click.stop>
+                    <el-icon class="filter-icon" :class="{ active: colFilters.pm_name.input || colFilters.pm_name.selected.length }">
+                      <Filter />
+                    </el-icon>
+                  </el-button>
+                </template>
+                <div class="filter-pop">
+                  <el-input v-model="colFilters.pm_name.input" placeholder="搜索（自由输入）" size="small" clearable />
+                  <el-divider class="filter-divider" />
+                  <div class="filter-options">
+                    <el-checkbox-group v-model="colFilters.pm_name.selected">
+                      <el-checkbox
+                        v-for="opt in getOptions('pm_name')"
+                        :key="opt"
+                        :label="opt"
+                        :value="opt"
+                      >
+                        {{ opt }}
+                      </el-checkbox>
+                    </el-checkbox-group>
+                  </div>
+                  <div class="filter-actions">
+                    <el-button size="small" @click="clearColFilter('pm_name')">清空</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </div>
+          </template>
           <template #default="{ row }">
             <el-tooltip :content="row.pm_user_id" placement="top" :disabled="!row.pm_user_id">
               <span>{{ row.pm_name || '—' }}</span>
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="成员数量" width="100" align="center" sortable :sort-method="(a: Project, b: Project) => (a.members?.length || 0) - (b.members?.length || 0)">
+
+        <!-- 成员数量 -->
+        <el-table-column
+          label="成员数量"
+          width="130"
+          align="center"
+          sortable
+          :sort-method="(a: Project, b: Project) => (a.members?.length || 0) - (b.members?.length || 0)"
+        >
+          <template #header>
+            <div class="col-with-filter">
+              <span>成员数量</span>
+              <el-popover trigger="click" placement="bottom" :width="200">
+                <template #reference>
+                  <el-button class="filter-icon-btn" link @click.stop>
+                    <el-icon class="filter-icon" :class="{ active: colFilters.member_count.input || colFilters.member_count.selected.length }">
+                      <Filter />
+                    </el-icon>
+                  </el-button>
+                </template>
+                <div class="filter-pop">
+                  <el-input v-model="colFilters.member_count.input" placeholder="搜索（自由输入）" size="small" clearable />
+                  <el-divider class="filter-divider" />
+                  <div class="filter-options">
+                    <el-checkbox-group v-model="colFilters.member_count.selected">
+                      <el-checkbox
+                        v-for="opt in getOptions('member_count')"
+                        :key="opt"
+                        :label="opt"
+                        :value="opt"
+                      >
+                        {{ opt }}
+                      </el-checkbox>
+                    </el-checkbox-group>
+                  </div>
+                  <div class="filter-actions">
+                    <el-button size="small" @click="clearColFilter('member_count')">清空</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </div>
+          </template>
           <template #default="{ row }">{{ row.members?.length || 0 }}</template>
         </el-table-column>
+
+        <!-- 状态 -->
         <el-table-column
           label="状态"
-          width="100"
+          width="130"
           align="center"
           sortable
           :sort-method="(a: Project, b: Project) => Number(a.is_active) - Number(b.is_active)"
-          :filters="statusFilterOptions"
-          :filter-method="statusFilterHandler"
-          filter-placement="bottom-end"
         >
+          <template #header>
+            <div class="col-with-filter">
+              <span>状态</span>
+              <el-popover trigger="click" placement="bottom" :width="180">
+                <template #reference>
+                  <el-button class="filter-icon-btn" link @click.stop>
+                    <el-icon class="filter-icon" :class="{ active: colFilters.status.input || colFilters.status.selected.length }">
+                      <Filter />
+                    </el-icon>
+                  </el-button>
+                </template>
+                <div class="filter-pop">
+                  <el-input v-model="colFilters.status.input" placeholder="搜索（自由输入）" size="small" clearable />
+                  <el-divider class="filter-divider" />
+                  <div class="filter-options">
+                    <el-checkbox-group v-model="colFilters.status.selected">
+                      <el-checkbox
+                        v-for="opt in getOptions('status')"
+                        :key="opt"
+                        :label="opt"
+                        :value="opt"
+                      >
+                        {{ opt }}
+                      </el-checkbox>
+                    </el-checkbox-group>
+                  </div>
+                  <div class="filter-actions">
+                    <el-button size="small" @click="clearColFilter('status')">清空</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </div>
+          </template>
           <template #default="{ row }">
             <el-tag :type="row.is_active ? 'success' : 'danger'">
               {{ row.is_active ? '活跃' : '停用' }}
             </el-tag>
           </template>
         </el-table-column>
+
+        <!-- 项目创建时间 -->
         <el-table-column
           prop="created_at"
           label="项目创建时间"
-          width="180"
+          width="200"
           sortable
           :sort-method="(a: Project, b: Project) => genericCompare(a, b, 'created_at')"
         >
+          <template #header>
+            <div class="col-with-filter">
+              <span>项目创建时间</span>
+              <el-popover trigger="click" placement="bottom" :width="240">
+                <template #reference>
+                  <el-button class="filter-icon-btn" link @click.stop>
+                    <el-icon class="filter-icon" :class="{ active: colFilters.created_at.input || colFilters.created_at.selected.length }">
+                      <Filter />
+                    </el-icon>
+                  </el-button>
+                </template>
+                <div class="filter-pop">
+                  <el-input v-model="colFilters.created_at.input" placeholder="搜索（自由输入）" size="small" clearable />
+                  <el-divider class="filter-divider" />
+                  <div class="filter-options">
+                    <el-checkbox-group v-model="colFilters.created_at.selected">
+                      <el-checkbox
+                        v-for="opt in getOptions('created_at')"
+                        :key="opt"
+                        :label="opt"
+                        :value="opt"
+                      >
+                        {{ opt }}
+                      </el-checkbox>
+                    </el-checkbox-group>
+                  </div>
+                  <div class="filter-actions">
+                    <el-button size="small" @click="clearColFilter('created_at')">清空</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </div>
+          </template>
           <template #default="{ row }">{{ row.created_at?.replace('T', ' ').slice(0, 19) }}</template>
         </el-table-column>
+
+        <!-- 最新动态时间 -->
         <el-table-column
           label="最新动态时间"
-          width="180"
+          width="200"
           sortable
           :sort-method="(a: Project, b: Project) => genericCompare(a, b, 'latest_activity_at')"
         >
+          <template #header>
+            <div class="col-with-filter">
+              <span>最新动态时间</span>
+              <el-popover trigger="click" placement="bottom" :width="240">
+                <template #reference>
+                  <el-button class="filter-icon-btn" link @click.stop>
+                    <el-icon class="filter-icon" :class="{ active: colFilters.latest_activity_at.input || colFilters.latest_activity_at.selected.length }">
+                      <Filter />
+                    </el-icon>
+                  </el-button>
+                </template>
+                <div class="filter-pop">
+                  <el-input v-model="colFilters.latest_activity_at.input" placeholder="搜索（自由输入）" size="small" clearable />
+                  <el-divider class="filter-divider" />
+                  <div class="filter-options">
+                    <el-checkbox-group v-model="colFilters.latest_activity_at.selected">
+                      <el-checkbox
+                        v-for="opt in getOptions('latest_activity_at')"
+                        :key="opt"
+                        :label="opt"
+                        :value="opt"
+                      >
+                        {{ opt }}
+                      </el-checkbox>
+                    </el-checkbox-group>
+                  </div>
+                  <div class="filter-actions">
+                    <el-button size="small" @click="clearColFilter('latest_activity_at')">清空</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </div>
+          </template>
           <template #default="{ row }">
             <span v-if="row.latest_activity_at">{{ row.latest_activity_at.replace('T', ' ').slice(0, 19) }}</span>
             <span v-else>—</span>
           </template>
         </el-table-column>
+
         <el-table-column label="操作" width="100" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="goDetail(row.id)">详情</el-button>
@@ -274,8 +561,66 @@ onMounted(() => {
   margin: 0;
 }
 
-.col-header {
+.list-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.col-with-filter {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.filter-icon-btn {
+  padding: 0;
+  margin: 0;
+  min-height: 0;
+  height: auto;
+}
+
+.filter-icon {
+  font-size: 14px;
+  color: #909399;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.filter-icon:hover {
+  color: #409eff;
+}
+
+.filter-icon.active {
+  color: #409eff;
+}
+
+.filter-pop {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.filter-divider {
+  margin: 8px 0;
+}
+
+.filter-options {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-options :deep(.el-checkbox) {
+  margin-right: 0;
+  height: auto;
+  min-height: 24px;
+}
+
+.filter-actions {
+  text-align: right;
+  margin-top: 8px;
 }
 </style>

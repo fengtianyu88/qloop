@@ -20,7 +20,9 @@ from app.schemas.organization import (
 from app.services.audit_service import create_audit_log
 from app.services.org_service import (
     create_org_unit,
+    delete_admin_scope,
     get_admin_scopes,
+    get_admin_scopes_for_org,
     get_org_tree,
     set_admin_scope,
     update_org_unit,
@@ -154,3 +156,40 @@ async def get_admin_scopes_endpoint(
     """Get all admin scopes for a user (SUPER_ADMIN only)."""
     scopes = await get_admin_scopes(db=db, user_id=user_id)
     return [AdminScopeResponse.model_validate(s) for s in scopes]
+
+
+@router.delete("/admin-scopes/{scope_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_admin_scope_endpoint(
+    scope_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(SystemRole.SUPER_ADMIN)),
+):
+    """Delete an admin scope (SUPER_ADMIN only)."""
+    deleted = await delete_admin_scope(db=db, scope_id=scope_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Admin scope not found",
+        )
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="delete_admin_scope",
+        resource_type="admin_scope",
+        resource_id=str(scope_id),
+        details={},
+    )
+    return None
+
+
+@router.get("/org-units/{org_id}/admin-scopes")
+async def get_org_admin_scopes_endpoint(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(SystemRole.ADMIN, SystemRole.SUPER_ADMIN)
+    ),
+):
+    """List all managers (admin scopes) for an org unit (ADMIN+)."""
+    return await get_admin_scopes_for_org(db=db, org_unit_id=org_id)

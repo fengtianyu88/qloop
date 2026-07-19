@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { getOrgTree, createOrg, createAdminScope, getAdminScopes } from '@/api/organizations'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { getOrgTree, createOrg, createAdminScope, getAdminScopes, deleteAdminScope, getOrgAdminScopes } from '@/api/organizations'
 import { getUsers } from '@/api/users'
 import type {
   AdminScope,
@@ -158,10 +158,77 @@ async function handleAddScope() {
     ElMessage.success('管理范围添加成功')
     scopeOrgId.value = ''
     await loadUserScopes()
+    await loadTree() // 立即刷新架构（管理者姓名立即更新）
   } catch {
     // 错误已统一提示
   } finally {
     scopeSubmitting.value = false
+  }
+}
+
+// ------------------------- 管理者管理对话框（点击管理者姓名打开）-------------------------
+const managerDialogVisible = ref(false)
+const managerDialogOrgName = ref('')
+const managerDialogOrgId = ref('')
+const managerList = ref<Array<{ id: string; user_id: string; full_name: string; username: string }>>([])
+const managerLoading = ref(false)
+const newManagerUserId = ref('')
+
+async function openManagerDialog(node: OrgTreeNode) {
+  managerDialogOrgName.value = node.name
+  managerDialogOrgId.value = node.id
+  newManagerUserId.value = ''
+  managerDialogVisible.value = true
+  await loadManagers(node.id)
+}
+
+async function loadManagers(orgId: string) {
+  managerLoading.value = true
+  try {
+    managerList.value = await getOrgAdminScopes(orgId)
+  } catch {
+    managerList.value = []
+  } finally {
+    managerLoading.value = false
+  }
+}
+
+async function handleAddManager() {
+  if (!newManagerUserId.value) {
+    ElMessage.warning('请先选择用户')
+    return
+  }
+  try {
+    await createAdminScope({
+      user_id: newManagerUserId.value,
+      org_unit_id: managerDialogOrgId.value,
+    })
+    ElMessage.success('管理者添加成功')
+    newManagerUserId.value = ''
+    await loadManagers(managerDialogOrgId.value)
+    await loadTree() // 立即刷新架构
+  } catch {
+    // 错误已统一提示
+  }
+}
+
+async function handleRemoveManager(scopeId: string, fullName: string) {
+  try {
+    await ElMessageBox.confirm(
+      `确认移除「${fullName}」在该组织单元的管理员身份？`,
+      '确认移除',
+      { type: 'warning' },
+    )
+  } catch {
+    return // 用户取消
+  }
+  try {
+    await deleteAdminScope(scopeId)
+    ElMessage.success('管理者移除成功')
+    await loadManagers(managerDialogOrgId.value)
+    await loadTree() // 立即刷新架构
+  } catch {
+    // 错误已统一提示
   }
 }
 
@@ -208,10 +275,21 @@ onMounted(async () => {
                     size="small"
                     type="success"
                     effect="dark"
+                    class="manager-tag"
+                    @click.stop="openManagerDialog(data)"
                   >
                     <el-icon style="margin-right: 2px"><User /></el-icon>{{ m }}
                   </el-tag>
                 </template>
+                <el-button
+                  type="success"
+                  link
+                  size="small"
+                  class="manage-managers-btn"
+                  @click.stop="openManagerDialog(data)"
+                >
+                  管理者
+                </el-button>
                 <el-button type="primary" link size="small" @click.stop="openChildOrgDialog(data)">
                   新增子节点
                 </el-button>
@@ -281,6 +359,58 @@ onMounted(async () => {
       </el-col>
     </el-row>
 
+    <!-- 管理者管理对话框 -->
+    <el-dialog
+      v-model="managerDialogVisible"
+      :title="'管理者管理 - ' + managerDialogOrgName"
+      width="560px"
+    >
+      <div v-loading="managerLoading">
+        <div class="manager-section-title">当前管理者：</div>
+        <el-empty v-if="!managerList.length" description="暂无管理者" :image-size="60" />
+        <div v-else class="manager-list">
+          <el-tag
+            v-for="m in managerList"
+            :key="m.id"
+            class="manager-item"
+            closable
+            type="success"
+            effect="dark"
+            @close="handleRemoveManager(m.id, m.full_name)"
+          >
+            <el-icon style="margin-right: 2px"><User /></el-icon>
+            {{ m.full_name }} ({{ m.username }})
+          </el-tag>
+        </div>
+
+        <el-divider />
+
+        <div class="manager-section-title">添加新管理者：</div>
+        <el-select
+          v-model="newManagerUserId"
+          placeholder="选择用户"
+          filterable
+          style="width: 100%"
+        >
+          <el-option
+            v-for="u in userList"
+            :key="u.id"
+            :label="`${u.full_name} (${u.username})`"
+            :value="u.id"
+          />
+        </el-select>
+        <div style="text-align: right; margin-top: 12px">
+          <el-button
+            type="primary"
+            :disabled="!newManagerUserId"
+            @click="handleAddManager"
+          >
+            添加管理者
+          </el-button>
+        </div>
+      </div>
+    </el-dialog>
+
     <!-- 新增组织对话框 -->
     <el-dialog
       v-model="orgDialogVisible"
@@ -343,5 +473,30 @@ onMounted(async () => {
 
 .scope-tag {
   margin: 0 8px 8px 0;
+}
+
+.manager-tag {
+  cursor: pointer;
+}
+
+.manage-managers-btn {
+  margin-left: 4px;
+}
+
+.manager-section-title {
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.manager-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manager-item {
+  cursor: default;
 }
 </style>

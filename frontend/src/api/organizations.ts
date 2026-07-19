@@ -35,3 +35,19 @@ export function createAdminScope(data: AdminScopeCreate): Promise<AdminScope> {
 export function getAdminScopes(userId: string): Promise<AdminScope[]> {
   return request.get(`/organizations/admin-scopes/${userId}`)
 }
+
+
+/** 删除一个管理范围（解除某用户对该组织单元的管理员身份） */
+export function deleteAdminScope(scopeId: string): Promise<void> {
+  return request.delete(`/organizations/admin-scopes/${scopeId}`)
+}
+
+/** 获取某组织单元的所有管理者（含 user_id/full_name/username） */
+export function getOrgAdminScopes(orgId: string): Promise<Array<{
+  id: string
+  user_id: string
+  full_name: string
+  username: string
+}>> {
+  return request.get(`/organizations/org-units/${orgId}/admin-scopes`)
+}

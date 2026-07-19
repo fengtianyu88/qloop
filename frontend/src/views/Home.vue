@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
@@ -213,6 +213,94 @@ async function handleExportAll() {
   }
 }
 
+// ============== 释放视图表格: 列筛选 + 排序 ==============
+// 列显示文本提取（用 row 的字段或派生值）
+function releaseCellValue(row: ReleaseListItem, prop: string): string {
+  switch (prop) {
+    case 'project_name':
+      return row.project_name || '—'
+    case 'version_number':
+      return row.version_number || '—'
+    case 'release_number':
+      return String(row.release_number ?? '—')
+    case 'pm_name':
+      // 项目经理：通过 userMap 解析（PM 信息在 release 中没有直接字段，使用 userMap 兜底）
+      // 注意：ReleaseListItem 没有 pm_user_id 字段，这里返回 — 占位；实际数据通过列表筛选
+      return '—'
+    case 'developer_name':
+      return row.developer_name || '—'
+    case 'tester_name':
+      return row.tester_name || '—'
+    case 'expert_name':
+      return row.expert_name || '—'
+    case 'change_notes':
+      return row.change_notes || '—'
+    case 'status':
+      return statusLabel(row.status)
+    case 'created_at':
+      return row.created_at?.replace('T', ' ').slice(0, 19) || '—'
+    default:
+      return String((row as any)[prop] ?? '')
+  }
+}
+
+type ColFilter = { input: string; selected: string[] }
+const releaseColFilters = reactive<Record<string, ColFilter>>({
+  project_name: { input: '', selected: [] },
+  version_number: { input: '', selected: [] },
+  release_number: { input: '', selected: [] },
+  pm_name: { input: '', selected: [] },
+  developer_name: { input: '', selected: [] },
+  tester_name: { input: '', selected: [] },
+  expert_name: { input: '', selected: [] },
+  change_notes: { input: '', selected: [] },
+  status: { input: '', selected: [] },
+  created_at: { input: '', selected: [] },
+})
+
+function getReleaseOptions(prop: string): string[] {
+  const set = new Set<string>()
+  releaseList.value.forEach((r) => set.add(releaseCellValue(r, prop)))
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+const filteredReleaseRows = computed(() => {
+  return releaseList.value.filter((row) => {
+    for (const prop of Object.keys(releaseColFilters)) {
+      const f = releaseColFilters[prop]
+      const v = releaseCellValue(row, prop)
+      if (f.input && !v.toLowerCase().includes(f.input.toLowerCase())) return false
+      if (f.selected.length > 0 && !f.selected.includes(v)) return false
+    }
+    return true
+  })
+})
+
+function clearReleaseFilter(prop: string) {
+  releaseColFilters[prop].input = ''
+  releaseColFilters[prop].selected = []
+}
+function clearAllReleaseFilters() {
+  Object.keys(releaseColFilters).forEach((k) => clearReleaseFilter(k))
+}
+const releaseHasActiveFilter = computed(() =>
+  Object.values(releaseColFilters).some((f) => f.input || f.selected.length > 0),
+)
+
+function releaseGenericCompare(a: ReleaseListItem, b: ReleaseListItem, prop: string): number {
+  const va = (a as any)[prop]
+  const vb = (b as any)[prop]
+  if (va == null && vb == null) return 0
+  if (va == null) return -1
+  if (vb == null) return 1
+  if (typeof va === 'string' && typeof vb === 'string' &&
+      /\d{4}-\d{2}-\d{2}T/.test(va) && /\d{4}-\d{2}-\d{2}T/.test(vb)) {
+    return va.localeCompare(vb)
+  }
+  if (typeof va === 'number' && typeof vb === 'number') return va - vb
+  return String(va).localeCompare(String(vb), 'zh-Hans-CN', { numeric: true })
+}
+
 onMounted(() => {
   loadReleases()
   loadUsers()
@@ -268,29 +356,293 @@ onMounted(() => {
           <el-form-item>
             <el-button type="primary" @click="handleReleaseSearch">查询</el-button>
             <el-button @click="handleReleaseReset">重置</el-button>
+            <el-button
+              v-if="releaseHasActiveFilter"
+              type="info"
+              size="small"
+              @click="clearAllReleaseFilters"
+            >清除列筛选</el-button>
           </el-form-item>
         </el-form>
       </el-card>
 
       <el-card class="table-card" shadow="never">
-        <el-table :data="releaseList" v-loading="releaseLoading" border stripe>
-          <el-table-column prop="project_name" label="项目名称" min-width="140" show-overflow-tooltip />
-          <el-table-column prop="version_number" label="版本号" width="120" show-overflow-tooltip />
-          <el-table-column prop="release_number" label="释放序号" width="90" align="center" />
-          <el-table-column prop="developer_name" label="开发人员" width="110" show-overflow-tooltip>
+        <el-table :data="filteredReleaseRows" v-loading="releaseLoading" border stripe>
+          <!-- 项目名称 -->
+          <el-table-column prop="project_name" label="项目名称" min-width="160" show-overflow-tooltip sortable>
+            <template #header>
+              <div class="col-with-filter">
+                <span>项目名称</span>
+                <el-popover trigger="click" placement="bottom" :width="220">
+                  <template #reference>
+                    <el-button class="filter-icon-btn" link @click.stop>
+                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.project_name.input || releaseColFilters.project_name.selected.length }"><Filter /></el-icon>
+                    </el-button>
+                  </template>
+                  <div class="filter-pop">
+                    <el-input v-model="releaseColFilters.project_name.input" placeholder="搜索（自由输入）" size="small" clearable />
+                    <el-divider class="filter-divider" />
+                    <div class="filter-options">
+                      <el-checkbox-group v-model="releaseColFilters.project_name.selected">
+                        <el-checkbox v-for="opt in getReleaseOptions('project_name')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
+                      </el-checkbox-group>
+                    </div>
+                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('project_name')">清空</el-button></div>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
+            <template #default="{ row }">{{ row.project_name || '—' }}</template>
+          </el-table-column>
+
+          <!-- 版本号 -->
+          <el-table-column prop="version_number" label="版本号" width="140" show-overflow-tooltip sortable>
+            <template #header>
+              <div class="col-with-filter">
+                <span>版本号</span>
+                <el-popover trigger="click" placement="bottom" :width="220">
+                  <template #reference>
+                    <el-button class="filter-icon-btn" link @click.stop>
+                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.version_number.input || releaseColFilters.version_number.selected.length }"><Filter /></el-icon>
+                    </el-button>
+                  </template>
+                  <div class="filter-pop">
+                    <el-input v-model="releaseColFilters.version_number.input" placeholder="搜索（自由输入）" size="small" clearable />
+                    <el-divider class="filter-divider" />
+                    <div class="filter-options">
+                      <el-checkbox-group v-model="releaseColFilters.version_number.selected">
+                        <el-checkbox v-for="opt in getReleaseOptions('version_number')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
+                      </el-checkbox-group>
+                    </div>
+                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('version_number')">清空</el-button></div>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
+            <template #default="{ row }">{{ row.version_number || '—' }}</template>
+          </el-table-column>
+
+          <!-- 释放序号 -->
+          <el-table-column prop="release_number" label="释放序号" width="110" align="center" sortable>
+            <template #header>
+              <div class="col-with-filter">
+                <span>释放序号</span>
+                <el-popover trigger="click" placement="bottom" :width="200">
+                  <template #reference>
+                    <el-button class="filter-icon-btn" link @click.stop>
+                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.release_number.input || releaseColFilters.release_number.selected.length }"><Filter /></el-icon>
+                    </el-button>
+                  </template>
+                  <div class="filter-pop">
+                    <el-input v-model="releaseColFilters.release_number.input" placeholder="搜索（自由输入）" size="small" clearable />
+                    <el-divider class="filter-divider" />
+                    <div class="filter-options">
+                      <el-checkbox-group v-model="releaseColFilters.release_number.selected">
+                        <el-checkbox v-for="opt in getReleaseOptions('release_number')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
+                      </el-checkbox-group>
+                    </div>
+                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('release_number')">清空</el-button></div>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
+          </el-table-column>
+
+          <!-- 项目经理（开发人员左边新增） -->
+          <el-table-column label="项目经理" width="120" show-overflow-tooltip sortable
+            :sort-method="(a: ReleaseListItem, b: ReleaseListItem) => String(a.project_name || '').localeCompare(String(b.project_name || ''))">
+            <template #header>
+              <div class="col-with-filter">
+                <span>项目经理</span>
+                <el-popover trigger="click" placement="bottom" :width="200">
+                  <template #reference>
+                    <el-button class="filter-icon-btn" link @click.stop>
+                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.pm_name.input || releaseColFilters.pm_name.selected.length }"><Filter /></el-icon>
+                    </el-button>
+                  </template>
+                  <div class="filter-pop">
+                    <el-input v-model="releaseColFilters.pm_name.input" placeholder="搜索（自由输入）" size="small" clearable />
+                    <el-divider class="filter-divider" />
+                    <div class="filter-options">
+                      <el-checkbox-group v-model="releaseColFilters.pm_name.selected">
+                        <el-checkbox v-for="opt in getReleaseOptions('pm_name')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
+                      </el-checkbox-group>
+                    </div>
+                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('pm_name')">清空</el-button></div>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
+            <template #default="{ row }">—</template>
+          </el-table-column>
+
+          <!-- 开发人员 -->
+          <el-table-column prop="developer_name" label="开发人员" width="120" show-overflow-tooltip sortable>
+            <template #header>
+              <div class="col-with-filter">
+                <span>开发人员</span>
+                <el-popover trigger="click" placement="bottom" :width="220">
+                  <template #reference>
+                    <el-button class="filter-icon-btn" link @click.stop>
+                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.developer_name.input || releaseColFilters.developer_name.selected.length }"><Filter /></el-icon>
+                    </el-button>
+                  </template>
+                  <div class="filter-pop">
+                    <el-input v-model="releaseColFilters.developer_name.input" placeholder="搜索（自由输入）" size="small" clearable />
+                    <el-divider class="filter-divider" />
+                    <div class="filter-options">
+                      <el-checkbox-group v-model="releaseColFilters.developer_name.selected">
+                        <el-checkbox v-for="opt in getReleaseOptions('developer_name')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
+                      </el-checkbox-group>
+                    </div>
+                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('developer_name')">清空</el-button></div>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
             <template #default="{ row }">{{ row.developer_name || '—' }}</template>
           </el-table-column>
-          <el-table-column prop="change_notes" label="变更点" min-width="160" show-overflow-tooltip>
+
+          <!-- 测试人员（开发人员右边新增） -->
+          <el-table-column prop="tester_name" label="测试人员" width="120" show-overflow-tooltip sortable>
+            <template #header>
+              <div class="col-with-filter">
+                <span>测试人员</span>
+                <el-popover trigger="click" placement="bottom" :width="220">
+                  <template #reference>
+                    <el-button class="filter-icon-btn" link @click.stop>
+                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.tester_name.input || releaseColFilters.tester_name.selected.length }"><Filter /></el-icon>
+                    </el-button>
+                  </template>
+                  <div class="filter-pop">
+                    <el-input v-model="releaseColFilters.tester_name.input" placeholder="搜索（自由输入）" size="small" clearable />
+                    <el-divider class="filter-divider" />
+                    <div class="filter-options">
+                      <el-checkbox-group v-model="releaseColFilters.tester_name.selected">
+                        <el-checkbox v-for="opt in getReleaseOptions('tester_name')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
+                      </el-checkbox-group>
+                    </div>
+                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('tester_name')">清空</el-button></div>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
+            <template #default="{ row }">{{ row.tester_name || '—' }}</template>
+          </el-table-column>
+
+          <!-- 审核专家（测试人员右边新增） -->
+          <el-table-column prop="expert_name" label="审核专家" width="120" show-overflow-tooltip sortable>
+            <template #header>
+              <div class="col-with-filter">
+                <span>审核专家</span>
+                <el-popover trigger="click" placement="bottom" :width="220">
+                  <template #reference>
+                    <el-button class="filter-icon-btn" link @click.stop>
+                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.expert_name.input || releaseColFilters.expert_name.selected.length }"><Filter /></el-icon>
+                    </el-button>
+                  </template>
+                  <div class="filter-pop">
+                    <el-input v-model="releaseColFilters.expert_name.input" placeholder="搜索（自由输入）" size="small" clearable />
+                    <el-divider class="filter-divider" />
+                    <div class="filter-options">
+                      <el-checkbox-group v-model="releaseColFilters.expert_name.selected">
+                        <el-checkbox v-for="opt in getReleaseOptions('expert_name')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
+                      </el-checkbox-group>
+                    </div>
+                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('expert_name')">清空</el-button></div>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
+            <template #default="{ row }">{{ row.expert_name || '—' }}</template>
+          </el-table-column>
+
+          <!-- 变更点 -->
+          <el-table-column prop="change_notes" label="变更点" min-width="180" show-overflow-tooltip sortable
+            :sort-method="(a: ReleaseListItem, b: ReleaseListItem) => releaseGenericCompare(a, b, 'change_notes')">
+            <template #header>
+              <div class="col-with-filter">
+                <span>变更点</span>
+                <el-popover trigger="click" placement="bottom" :width="220">
+                  <template #reference>
+                    <el-button class="filter-icon-btn" link @click.stop>
+                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.change_notes.input || releaseColFilters.change_notes.selected.length }"><Filter /></el-icon>
+                    </el-button>
+                  </template>
+                  <div class="filter-pop">
+                    <el-input v-model="releaseColFilters.change_notes.input" placeholder="搜索（自由输入）" size="small" clearable />
+                    <el-divider class="filter-divider" />
+                    <div class="filter-options">
+                      <el-checkbox-group v-model="releaseColFilters.change_notes.selected">
+                        <el-checkbox v-for="opt in getReleaseOptions('change_notes')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
+                      </el-checkbox-group>
+                    </div>
+                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('change_notes')">清空</el-button></div>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
             <template #default="{ row }">{{ row.change_notes || '—' }}</template>
           </el-table-column>
-          <el-table-column label="状态" width="130" align="center">
+
+          <!-- 状态 -->
+          <el-table-column prop="status" label="状态" width="140" align="center" sortable
+            :sort-method="(a: ReleaseListItem, b: ReleaseListItem) => String(a.status).localeCompare(String(b.status))">
+            <template #header>
+              <div class="col-with-filter">
+                <span>状态</span>
+                <el-popover trigger="click" placement="bottom" :width="200">
+                  <template #reference>
+                    <el-button class="filter-icon-btn" link @click.stop>
+                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.status.input || releaseColFilters.status.selected.length }"><Filter /></el-icon>
+                    </el-button>
+                  </template>
+                  <div class="filter-pop">
+                    <el-input v-model="releaseColFilters.status.input" placeholder="搜索（自由输入）" size="small" clearable />
+                    <el-divider class="filter-divider" />
+                    <div class="filter-options">
+                      <el-checkbox-group v-model="releaseColFilters.status.selected">
+                        <el-checkbox v-for="opt in getReleaseOptions('status')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
+                      </el-checkbox-group>
+                    </div>
+                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('status')">清空</el-button></div>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
             <template #default="{ row }">
               <el-tag :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="created_at" label="创建时间" width="170">
+
+          <!-- 创建时间 -->
+          <el-table-column prop="created_at" label="创建时间" width="180" sortable
+            :sort-method="(a: ReleaseListItem, b: ReleaseListItem) => releaseGenericCompare(a, b, 'created_at')">
+            <template #header>
+              <div class="col-with-filter">
+                <span>创建时间</span>
+                <el-popover trigger="click" placement="bottom" :width="220">
+                  <template #reference>
+                    <el-button class="filter-icon-btn" link @click.stop>
+                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.created_at.input || releaseColFilters.created_at.selected.length }"><Filter /></el-icon>
+                    </el-button>
+                  </template>
+                  <div class="filter-pop">
+                    <el-input v-model="releaseColFilters.created_at.input" placeholder="搜索（自由输入）" size="small" clearable />
+                    <el-divider class="filter-divider" />
+                    <div class="filter-options">
+                      <el-checkbox-group v-model="releaseColFilters.created_at.selected">
+                        <el-checkbox v-for="opt in getReleaseOptions('created_at')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
+                      </el-checkbox-group>
+                    </div>
+                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('created_at')">清空</el-button></div>
+                  </div>
+                </el-popover>
+              </div>
+            </template>
             <template #default="{ row }">{{ row.created_at?.replace('T', ' ').slice(0, 19) }}</template>
           </el-table-column>
+
           <el-table-column label="操作" width="100" fixed="right" align="center">
             <template #default="{ row }">
               <el-button type="primary" link @click="goReleaseDetail(row.id)">详情</el-button>
@@ -384,5 +736,62 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.col-with-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.filter-icon-btn {
+  padding: 0;
+  margin: 0;
+  min-height: 0;
+  height: auto;
+}
+
+.filter-icon {
+  font-size: 14px;
+  color: #909399;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.filter-icon:hover {
+  color: #409eff;
+}
+
+.filter-icon.active {
+  color: #409eff;
+}
+
+.filter-pop {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.filter-divider {
+  margin: 8px 0;
+}
+
+.filter-options {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-options :deep(.el-checkbox) {
+  margin-right: 0;
+  height: auto;
+  min-height: 24px;
+}
+
+.filter-actions {
+  text-align: right;
+  margin-top: 8px;
 }
 </style>

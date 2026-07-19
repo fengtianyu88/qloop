@@ -216,3 +216,45 @@ async def get_admin_scopes(
         select(AdminScope).where(AdminScope.user_id == user_id)
     )
     return list(result.scalars().all())
+
+
+async def delete_admin_scope(db: AsyncSession, scope_id: uuid.UUID) -> bool:
+    """Delete an admin scope by ID.
+
+    Args:
+        db: The async database session.
+        scope_id: The admin scope ID.
+
+    Returns:
+        True if deleted, False if not found.
+    """
+    result = await db.execute(
+        select(AdminScope).where(AdminScope.id == scope_id)
+    )
+    scope = result.scalar_one_or_none()
+    if scope is None:
+        return False
+    await db.delete(scope)
+    await db.commit()
+    return True
+
+
+async def get_admin_scopes_for_org(
+    db: AsyncSession, org_unit_id: uuid.UUID
+) -> List[dict]:
+    """Get all admin scopes for an org unit, joined with user info.
+
+    Returns a list of dicts: { id, user_id, full_name, username }.
+    """
+    from app.models.user import User
+    res = await db.execute(
+        select(AdminScope.id, AdminScope.user_id, User.full_name, User.username)
+        .select_from(AdminScope)
+        .join(User, AdminScope.user_id == User.id)
+        .where(AdminScope.org_unit_id == org_unit_id)
+    )
+    return [
+        {"id": str(row.id), "user_id": str(row.user_id),
+         "full_name": row.full_name, "username": row.username}
+        for row in res.all()
+    ]
