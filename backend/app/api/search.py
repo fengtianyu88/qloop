@@ -215,9 +215,121 @@ async def search_projects(
     result = await db.execute(query)
     projects = list(result.scalars().all())
 
+    # Populate pm_name + latest_activity_at for the response.
+    from app.services.project_service import _enrich_projects
+    await _enrich_projects(db, projects)
+
     return PaginatedResponse[ProjectResponse].create(
         items=[ProjectResponse.model_validate(p) for p in projects],
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Export everything the current user can access (CSV)
+# ---------------------------------------------------------------------------
+@router.get("/export")
+async def export_all(
+    format: str = Query("csv", regex="^(csv)$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Export **all** releases and projects the current user can access.
+
+    Returns a CSV file with two sheets worth of data (releases + projects)
+    concatenated in a single document with a ``record_type`` column to
+    tell them apart.
+    """
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    # --- Releases (all rows matching user's access; same logic as search_releases) ---
+    DeveloperUser = aliased(User)
+    TesterUser = aliased(User)
+    ExpertUser = aliased(User)
+
+    rel_query = (
+        select(
+            Release.id,
+            Release.release_number,
+            Release.status,
+            Release.change_notes,
+            Release.created_at,
+            Release.updated_at,
+            Project.name.label("project_name"),
+            Version.version_number.label("version_number"),
+            DeveloperUser.full_name.label("developer_name"),
+            TesterUser.full_name.label("tester_name"),
+            ExpertUser.full_name.label("expert_name"),
+        )
+        .select_from(Release)
+        .join(Version, Release.version_id == Version.id)
+        .join(Project, Version.project_id == Project.id)
+        .outerjoin(DeveloperUser, Version.developer_id == DeveloperUser.id)
+        .outerjoin(TesterUser, Version.tester_id == TesterUser.id)
+        .outerjoin(ExpertUser, Version.expert_id == ExpertUser.id)
+    )
+    if current_user.system_role == SystemRole.GUEST:
+        rel_query = rel_query.where(Release.status == ReleaseStatus.RELEASED)
+    rel_query = rel_query.order_by(Release.created_at.desc())
+    rel_result = await db.execute(rel_query)
+    rel_rows = rel_result.all()
+
+    # --- Projects (all rows the user can access) ---
+    from app.services.project_service import _enrich_projects, get_projects_for_user
+    projects = await get_projects_for_user(db=db, user_id=current_user.id)
+    await _enrich_projects(db, projects)
+
+    # --- Build CSV ---
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "record_type", "id", "project_name", "version_number",
+        "release_number", "status", "change_notes",
+        "developer_name", "tester_name", "expert_name",
+        "pm_name", "created_at", "updated_at", "latest_activity_at",
+    ])
+    for r in rel_rows:
+        writer.writerow([
+            "release",
+            str(r.id),
+            r.project_name or "",
+            r.version_number or "",
+            r.release_number,
+            r.status.value if hasattr(r.status, "value") else str(r.status),
+            r.change_notes or "",
+            r.developer_name or "",
+            r.tester_name or "",
+            r.expert_name or "",
+            "",  # pm_name N/A for releases
+            r.created_at.isoformat() if r.created_at else "",
+            r.updated_at.isoformat() if r.updated_at else "",
+            "",  # latest_activity_at N/A for releases
+        ])
+    for p in projects:
+        writer.writerow([
+            "project",
+            str(p.id),
+            p.name,
+            "",  # version_number N/A
+            "",  # release_number N/A
+            "active" if p.is_active else "inactive",
+            p.description or "",
+            "", "", "",  # developer/tester/expert N/A
+            getattr(p, "pm_name", "") or "",
+            p.created_at.isoformat() if p.created_at else "",
+            p.updated_at.isoformat() if p.updated_at else "",
+            getattr(p, "latest_activity_at", None).isoformat()
+                if getattr(p, "latest_activity_at", None) else "",
+        ])
+
+    buf.seek(0)
+    filename = f"qloop_export_{current_user.username}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

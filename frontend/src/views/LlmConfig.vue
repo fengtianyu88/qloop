@@ -8,6 +8,8 @@ import {
   disableModel,
   enableModel,
   deleteModel,
+  testModel,
+  testModelInline,
   getRules,
   createRule,
   updateRule,
@@ -19,6 +21,7 @@ import type {
   LLMProtocol,
   LLMModelCreate,
   LLMModelUpdate,
+  LLMTestResult,
   ReviewRule,
   ReviewRuleCreate,
   ReviewRuleUpdate,
@@ -274,6 +277,58 @@ async function handleRuleDelete(row: ReviewRule) {
   }
 }
 
+// ======================== 模型连通性测试 ========================
+const testingIds = ref<Set<string>>(new Set())
+const dialogTesting = ref(false)
+const dialogTestResult = ref<LLMTestResult | null>(null)
+
+async function handleTestModel(row: LLMModel) {
+  testingIds.value.add(row.id)
+  try {
+    const result = await testModel(row.id)
+    if (result.success) {
+      ElMessage.success(`「${row.name}」连通正常（${result.latency_ms ?? 0}ms）`)
+    } else {
+      ElMessage.error(`「${row.name}」测试失败：${result.message}`)
+    }
+  } catch {
+    // 错误已统一提示
+  } finally {
+    testingIds.value.delete(row.id)
+  }
+}
+
+async function handleTestModelInline() {
+  // 在弹窗中点测试：用当前表单内容（不保存）调用 test-inline 端点
+  if (!modelForm.api_base || !modelForm.api_key || !modelForm.model_name) {
+    ElMessage.warning('请先填写 API 地址、API Key、模型标识')
+    return
+  }
+  dialogTesting.value = true
+  dialogTestResult.value = null
+  try {
+    const result = await testModelInline({
+      name: modelForm.name || '(unsaved)',
+      protocol: modelForm.protocol,
+      api_base: modelForm.api_base,
+      api_key: modelForm.api_key,
+      model_name: modelForm.model_name,
+      is_active: true,
+      priority: modelForm.priority,
+    })
+    dialogTestResult.value = result
+    if (result.success) {
+      ElMessage.success(`连通正常（${result.latency_ms ?? 0}ms）`)
+    } else {
+      ElMessage.error(`测试失败：${result.message}`)
+    }
+  } catch {
+    // 错误已统一提示
+  } finally {
+    dialogTesting.value = false
+  }
+}
+
 // ======================== 评审规则 ========================
 const rules = ref<ReviewRule[]>([])
 const ruleLoading = ref(false)
@@ -439,9 +494,15 @@ onMounted(async () => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right" align="center">
+        <el-table-column label="操作" width="220" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="openModelEdit(row)">编辑</el-button>
+            <el-button
+              type="success"
+              link
+              :loading="testingIds.has(row.id)"
+              @click="handleTestModel(row)"
+            >测试</el-button>
             <el-button
               v-if="row.is_active"
               type="warning"
@@ -556,8 +617,22 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="modelDialogVisible = false">取消</el-button>
+        <el-button
+          type="success"
+          :loading="dialogTesting"
+          @click="handleTestModelInline"
+        >测试连通性</el-button>
         <el-button type="primary" :loading="modelSubmitting" @click="handleModelSubmit">确定</el-button>
       </template>
+      <el-alert
+        v-if="dialogTestResult"
+        :type="dialogTestResult.success ? 'success' : 'error'"
+        :title="dialogTestResult.success ? '连通正常' : '测试失败'"
+        :description="dialogTestResult.message + (dialogTestResult.latency_ms ? `（耗时 ${dialogTestResult.latency_ms}ms）` : '')"
+        show-icon
+        :closable="true"
+        style="margin-top: 12px"
+      />
     </el-dialog>
 
     <!-- 规则对话框 -->

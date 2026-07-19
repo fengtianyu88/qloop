@@ -3,7 +3,7 @@
 import uuid
 from typing import List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -67,7 +67,10 @@ async def get_project_by_id(
         .options(selectinload(Project.members))
         .where(Project.id == project_id)
     )
-    return result.scalar_one_or_none()
+    project = result.scalar_one_or_none()
+    if project is not None:
+        await _enrich_projects(db, [project])
+    return project
 
 
 async def get_projects_for_user(
@@ -91,7 +94,10 @@ async def get_projects_for_user(
         .distinct()
         .order_by(Project.created_at.desc())
     )
-    return list(result.scalars().all())
+    projects = list(result.scalars().all())
+    # Populate pm_name + latest_activity_at for the response.
+    await _enrich_projects(db, projects)
+    return projects
 
 
 async def add_project_member(
@@ -253,3 +259,58 @@ async def get_version_by_id(
         .where(Version.id == version_id)
     )
     return result.scalar_one_or_none()
+
+
+# ---------------------------------------------------------------------------
+# Enrichment helpers (pm_name + latest_activity_at)
+# ---------------------------------------------------------------------------
+async def _enrich_projects(db: AsyncSession, projects: List[Project]) -> None:
+    """Populate ``pm_name`` and ``latest_activity_at`` on each Project.
+
+    Mutates the projects in place. The extra attributes are stored
+    directly on the instance ``__dict__`` so SQLAlchemy's mapper does
+    not intercept or refresh them, and Pydantic's ``from_attributes``
+    will pick them up when ``ProjectResponse.model_validate(p)`` runs.
+    """
+    if not projects:
+        return
+
+    from sqlalchemy.orm import make_transient
+    from app.models.user import User
+    from app.models.project import Release, Version
+
+    pm_ids = {p.pm_user_id for p in projects}
+    if pm_ids:
+        res = await db.execute(
+            select(User.id, User.full_name).where(User.id.in_(pm_ids))
+        )
+        name_map = {row.id: row.full_name for row in res.all()}
+    else:
+        name_map = {}
+
+    # latest_activity_at = MAX(releases.updated_at) per project
+    project_ids = [p.id for p in projects]
+    if project_ids:
+        res = await db.execute(
+            select(
+                Version.project_id.label("project_id"),
+                func.max(Release.updated_at).label("latest"),
+            )
+            .select_from(Release)
+            .join(Version, Release.version_id == Version.id)
+            .where(Version.project_id.in_(project_ids))
+            .group_by(Version.project_id)
+        )
+        latest_map = {row.project_id: row.latest for row in res.all()}
+    else:
+        latest_map = {}
+
+    # Detach from the session so SA never tries to lazy-load or refresh
+    # the transient attributes we are about to set.
+    for p in projects:
+        make_transient(p)
+        # Walk the already-loaded relationships so they stay accessible.
+    for p in projects:
+        # Use object.__setattr__ to bypass SQLAlchemy attribute events.
+        object.__setattr__(p, "pm_name", name_map.get(p.pm_user_id))
+        object.__setattr__(p, "latest_activity_at", latest_map.get(p.id))

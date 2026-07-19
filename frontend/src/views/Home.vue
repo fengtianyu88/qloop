@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { Download } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
-import { searchProjects, searchReleases } from '@/api/search'
+import { searchProjects, searchReleases, exportAll } from '@/api/search'
 import { getUsers } from '@/api/users'
 import {
   statusLabel,
@@ -189,6 +191,28 @@ async function loadUsers() {
   }
 }
 
+// 导出所有：调用 /api/search/export，下载 CSV
+const exporting = ref(false)
+async function handleExportAll() {
+  exporting.value = true
+  try {
+    const blob = await exportAll()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `qloop_export_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch {
+    // 错误已统一提示
+  } finally {
+    exporting.value = false
+  }
+}
+
 onMounted(() => {
   loadReleases()
   loadUsers()
@@ -199,10 +223,20 @@ onMounted(() => {
   <div class="page-container">
     <div class="home-header">
       <h2 class="page-title">首页</h2>
-      <el-radio-group v-model="viewMode" @change="handleViewChange">
-        <el-radio-button value="release">释放视图</el-radio-button>
-        <el-radio-button value="project">项目视图</el-radio-button>
-      </el-radio-group>
+      <div class="home-header-actions">
+        <el-radio-group v-model="viewMode" @change="handleViewChange">
+          <el-radio-button value="release">释放视图</el-radio-button>
+          <el-radio-button value="project">项目视图</el-radio-button>
+        </el-radio-group>
+        <el-button
+          type="success"
+          :loading="exporting"
+          @click="handleExportAll"
+        >
+          <el-icon v-if="!exporting"><Download /></el-icon>
+          导出所有
+        </el-button>
+      </div>
     </div>
 
     <!-- 释放视图 -->
@@ -344,5 +378,11 @@ onMounted(() => {
 
 .home-header .page-title {
   margin: 0;
+}
+
+.home-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 </style>

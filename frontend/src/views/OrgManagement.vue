@@ -201,6 +201,17 @@ onMounted(async () => {
                 <el-tag size="small" type="info" effect="plain">
                   {{ orgTypeLabel[data.org_type as OrgType] || data.org_type }}
                 </el-tag>
+                <template v-if="data.manager_names && data.manager_names.length">
+                  <el-tag
+                    v-for="m in data.manager_names"
+                    :key="m"
+                    size="small"
+                    type="success"
+                    effect="dark"
+                  >
+                    <el-icon style="margin-right: 2px"><User /></el-icon>{{ m }}
+                  </el-tag>
+                </template>
                 <el-button type="primary" link size="small" @click.stop="openChildOrgDialog(data)">
                   新增子节点
                 </el-button>
@@ -318,6 +329,10 @@ onMounted(async () => {
 
 .tree-node-name {
   font-size: 14px;
+}
+
+.tree-node :deep(.el-tag) {
+  margin-left: 0;
 }
 
 .scope-title {

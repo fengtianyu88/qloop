@@ -289,6 +289,134 @@ async def delete_llm_model(
 
 
 # ---------------------------------------------------------------------------
+# Model connectivity test
+# ---------------------------------------------------------------------------
+class LLMTestResult(BaseModel):
+    """Result of an LLM model connectivity test."""
+
+    success: bool
+    message: str
+    model_used: Optional[str] = None
+    latency_ms: Optional[int] = None
+
+
+@router.post(
+    "/models/{model_id}/test",
+    response_model=LLMTestResult,
+    dependencies=[Depends(_SUPER_ADMIN)],
+)
+async def test_llm_model(
+    model_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Test an LLM model configuration by sending a tiny prompt.
+
+    Returns success=True only if the endpoint responds with a parseable
+    message. Otherwise success=False with the error message.
+    """
+    import time
+    from app.llm.client import call_llm
+
+    result = await db.execute(select(LLMModel).where(LLMModel.id == model_id))
+    model = result.scalar_one_or_none()
+    if model is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="LLM model not found",
+        )
+
+    start = time.perf_counter()
+    try:
+        # Use a short timeout for the test so the UI does not hang.
+        response = await call_llm(model, "ping", timeout=15)
+    except Exception as exc:  # pragma: no cover - defensive
+        elapsed = int((time.perf_counter() - start) * 1000)
+        return LLMTestResult(
+            success=False,
+            message=f"调用异常: {exc}",
+            model_used=model.model_name,
+            latency_ms=elapsed,
+        )
+    elapsed = int((time.perf_counter() - start) * 1000)
+
+    if response.success:
+        snippet = (response.content or "").strip().replace(chr(10), " ")
+        if len(snippet) > 120:
+            snippet = snippet[:120] + "…"
+        return LLMTestResult(
+            success=True,
+            message=f"连通正常。模型回复: {snippet}",
+            model_used=response.model_used,
+            latency_ms=elapsed,
+        )
+    return LLMTestResult(
+        success=False,
+        message=response.error or "调用失败",
+        model_used=response.model_used,
+        latency_ms=elapsed,
+    )
+
+
+@router.post(
+    "/models/test-inline",
+    response_model=LLMTestResult,
+    dependencies=[Depends(_SUPER_ADMIN)],
+)
+async def test_llm_model_inline(
+    payload: "LLMModelCreate",
+):
+    """Test an LLM model configuration **before** saving it.
+
+    Accepts the same payload as ``POST /models`` and constructs an
+    in-memory ``LLMModel`` instance so the user can validate their
+    api_base / api_key / model_name combination without persisting.
+    """
+    import time
+    from app.llm.client import call_llm
+    from app.models.review import LLMModel as _LLMModel
+
+    proto = _LLMModel(
+        name=payload.name or "(unsaved)",
+        protocol=payload.protocol or LLMProtocol.OPENAI,
+        api_base=payload.api_base,
+        api_key=payload.api_key,
+        model_name=payload.model_name,
+        is_active=True,
+        priority=1,
+    )
+
+    start = time.perf_counter()
+    try:
+        response = await call_llm(proto, "ping", timeout=15)
+    except Exception as exc:  # pragma: no cover
+        elapsed = int((time.perf_counter() - start) * 1000)
+        return LLMTestResult(
+            success=False,
+            message=f"调用异常: {exc}",
+            model_used=proto.model_name,
+            latency_ms=elapsed,
+        )
+    elapsed = int((time.perf_counter() - start) * 1000)
+
+    if response.success:
+        snippet = (response.content or "").strip().replace(chr(10), " ")
+        if len(snippet) > 120:
+            snippet = snippet[:120] + "…"
+        return LLMTestResult(
+            success=True,
+            message=f"连通正常。模型回复: {snippet}",
+            model_used=response.model_used,
+            latency_ms=elapsed,
+        )
+    return LLMTestResult(
+        success=False,
+        message=response.error or "调用失败",
+        model_used=response.model_used,
+        latency_ms=elapsed,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Review Rules
 # ---------------------------------------------------------------------------
 @router.get(

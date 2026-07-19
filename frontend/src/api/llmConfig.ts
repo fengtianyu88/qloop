@@ -65,3 +65,16 @@ export function updateRule(id: string, data: ReviewRuleUpdate): Promise<ReviewRu
 export function deleteRule(id: string): Promise<{ deleted: boolean; id: string }> {
   return request.delete(`/llm-config/rules/${id}`)
 }
+
+
+/** 测试已保存的 LLM 模型配置连通性 */
+export function testModel(id: string): Promise<import('@/types').LLMTestResult> {
+  return request.post(`/llm-config/models/${id}/test`)
+}
+
+/** 测试尚未保存的 LLM 模型配置（弹窗内点测试时用） */
+export function testModelInline(
+  data: import('@/types').LLMModelCreate,
+): Promise<import('@/types').LLMTestResult> {
+  return request.post('/llm-config/models/test-inline', data)
+}

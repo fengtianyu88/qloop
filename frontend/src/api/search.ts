@@ -23,3 +23,15 @@ export function searchProjects(
 ): Promise<PaginatedResponse<Project>> {
   return request.get('/search/projects', { params })
 }
+
+
+/**
+ * 导出当前用户能访问的所有数据（释放 + 项目），返回 CSV blob。
+ * 浏览器侧用 <a download> 触发下载。
+ */
+export async function exportAll(): Promise<Blob> {
+  const res = await request.get('/search/export', {
+    responseType: 'blob',
+  })
+  return res as unknown as Blob
+}

@@ -52,9 +52,11 @@ class ProjectResponse(BaseModel):
     name: str
     description: Optional[str] = None
     pm_user_id: uuid.UUID
+    pm_name: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    latest_activity_at: Optional[datetime] = None
     members: List[ProjectMemberResponse] = []
 
 

@@ -124,9 +124,13 @@ export interface Project {
   name: string
   description: string | null
   pm_user_id: string
+  /** 项目经理姓名（后端 join 后填充） */
+  pm_name: string | null
   is_active: boolean
   created_at: string
   updated_at: string
+  /** 项目最新动态时间（取 releases.updated_at 的最大值） */
+  latest_activity_at: string | null
   members: ProjectMember[]
 }
 
@@ -257,6 +261,15 @@ export interface LLMModelUpdate {
   priority?: number
 }
 
+/** LLM 模型连通性测试结果 */
+export interface LLMTestResult {
+  success: boolean
+  message: string
+  model_used: string | null
+  latency_ms: number | null
+}
+
+
 /** 评审规则 */
 export interface ReviewRule {
   id: string
@@ -335,6 +348,8 @@ export interface OrgUnit {
 
 /** 组织树节点 */
 export interface OrgTreeNode extends OrgUnit {
+  /** 该组织单元的管理员全名列表（后端 join AdminScope 后填充） */
+  manager_names: string[]
   children: OrgTreeNode[]
 }
 

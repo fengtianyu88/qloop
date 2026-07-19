@@ -57,6 +57,8 @@ class OrgTreeResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    # Display names of users who administer this org unit (populated by service).
+    manager_names: List[str] = []
     children: List["OrgTreeResponse"] = []
 
 

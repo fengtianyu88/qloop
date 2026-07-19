@@ -47,8 +47,13 @@ async def create_org_unit(
 
 async def _build_tree(
     all_units: List[OrgUnit],
+    manager_map: Dict[uuid.UUID, List[str]],
 ) -> List[OrgTreeResponse]:
-    """Build a tree of OrgTreeResponse from a flat list of OrgUnits."""
+    """Build a tree of OrgTreeResponse from a flat list of OrgUnits.
+
+    ``manager_map`` is a mapping ``org_unit_id -> [full_name, ...]`` of
+    users who have an admin scope on that unit.
+    """
     # Group units by parent_id
     children_map: Dict[Optional[uuid.UUID], List[OrgUnit]] = {}
     for unit in all_units:
@@ -69,6 +74,7 @@ async def _build_tree(
             is_active=unit.is_active,
             created_at=unit.created_at,
             updated_at=unit.updated_at,
+            manager_names=manager_map.get(unit.id, []),
             children=children,
         )
 
@@ -84,7 +90,8 @@ async def get_org_tree(db: AsyncSession) -> List[OrgTreeResponse]:
         db: The async database session.
 
     Returns:
-        A list of OrgTreeResponse representing root nodes with children.
+        A list of OrgTreeResponse representing root nodes with children,
+        each carrying the list of admin user full_names that govern it.
     """
     result = await db.execute(
         select(OrgUnit)
@@ -92,7 +99,23 @@ async def get_org_tree(db: AsyncSession) -> List[OrgTreeResponse]:
         .order_by(OrgUnit.created_at)
     )
     all_units = list(result.scalars().all())
-    return await _build_tree(all_units)
+
+    # Build manager_map: org_unit_id -> [full_name, ...]
+    manager_map: Dict[uuid.UUID, List[str]] = {}
+    if all_units:
+        from app.models.organization import AdminScope
+        from app.models.user import User
+        unit_ids = [u.id for u in all_units]
+        res = await db.execute(
+            select(AdminScope.org_unit_id, User.full_name)
+            .select_from(AdminScope)
+            .join(User, AdminScope.user_id == User.id)
+            .where(AdminScope.org_unit_id.in_(unit_ids))
+        )
+        for row in res.all():
+            manager_map.setdefault(row.org_unit_id, []).append(row.full_name)
+
+    return await _build_tree(all_units, manager_map)
 
 
 async def get_org_unit_by_id(
