@@ -381,6 +381,32 @@ export interface ExternalRecipient {
 }
 
 // ---------------------------------------------------------------------------
+// 系统设置
+// ---------------------------------------------------------------------------
+
+/** 系统设置（单例，仅 super_admin 可写） */
+export interface SystemSettings {
+  id: string
+  site_name: string
+  site_short_name: string
+  updated_by: string | null
+  updated_at: string | null
+  created_at: string
+}
+
+/** 更新系统设置请求 */
+export interface SystemSettingsUpdate {
+  site_name?: string
+  site_short_name?: string
+}
+
+/** 公开站点信息（无需登录） */
+export interface PublicSiteInfo {
+  site_name: string
+  site_short_name: string
+}
+
+// ---------------------------------------------------------------------------
 // 通用响应
 // ---------------------------------------------------------------------------
 

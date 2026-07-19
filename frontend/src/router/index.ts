@@ -4,7 +4,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import Layout from '@/components/Layout.vue'
-import { APP_TITLE } from '@/config'
+import { useSiteInfoStore } from '@/stores/siteInfo'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -79,6 +79,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'LLM 配置', requiresAuth: true, roles: ['super_admin'] },
       },
       {
+        path: 'system-settings',
+        name: 'SystemSettings',
+        component: () => import('@/views/SystemSettings.vue'),
+        meta: { title: '系统设置', requiresAuth: true, roles: ['super_admin'] },
+      },
+      {
         path: 'audit',
         name: 'AuditLog',
         component: () => import('@/views/AuditLog.vue'),
@@ -108,11 +114,13 @@ const router = createRouter({
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore()
 
-  // 设置页面标题
+  // 设置页面标题（使用动态站点名称）
+  const siteInfoStore = useSiteInfoStore()
+  const siteName = siteInfoStore.siteName
   if (to.meta.title) {
-    document.title = `${to.meta.title} - ${APP_TITLE}`
+    document.title = `${to.meta.title} - ${siteName}`
   } else {
-    document.title = APP_TITLE
+    document.title = siteName
   }
 
   const requiresAuth = to.meta.requiresAuth !== false

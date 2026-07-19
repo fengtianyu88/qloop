@@ -6,10 +6,15 @@ import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notification'
 import { roleLabel } from '@/utils/status'
 import type { Notification } from '@/types'
-import { APP_TITLE, APP_SHORT_NAME } from '@/config'
+import { useSiteInfoStore } from '@/stores/siteInfo'
 
 const authStore = useAuthStore()
 const notificationStore = useNotificationStore()
+const siteInfoStore = useSiteInfoStore()
+
+// 动态站点名称（由 super_admin 在系统设置中配置）
+const APP_TITLE = computed(() => siteInfoStore.siteName)
+const APP_SHORT_NAME = computed(() => siteInfoStore.siteShortName)
 const route = useRoute()
 const router = useRouter()
 
@@ -30,6 +35,7 @@ const menuItems = computed<MenuItem[]>(() => [
   { index: '/users', title: '用户管理', icon: 'User', visible: authStore.isAdmin },
   { index: '/organizations', title: '组织管理', icon: 'OfficeBuilding', visible: authStore.isAdmin },
   { index: '/llm-config', title: 'LLM 配置', icon: 'Cpu', visible: authStore.isSuperAdmin },
+  { index: '/system-settings', title: '系统设置', icon: 'Setting', visible: authStore.isSuperAdmin },
   { index: '/audit', title: '审计日志', icon: 'Document', visible: authStore.isAdmin },
   { index: '/profile', title: '个人信息', icon: 'UserFilled', visible: true },
 ])
@@ -87,6 +93,8 @@ onMounted(async () => {
     await authStore.fetchCurrentUser()
   }
   await notificationStore.fetchUnreadCount()
+  // 拉取最新的站点品牌信息（super_admin 可能已修改）
+  await siteInfoStore.refresh()
 })
 </script>
 

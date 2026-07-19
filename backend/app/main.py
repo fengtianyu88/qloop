@@ -12,6 +12,7 @@ from app.api.projects import router as projects_router
 from app.api.releases import router as releases_router
 from app.api.reviews import router as reviews_router
 from app.api.search import router as search_router
+from app.api.system_settings import router as system_settings_router
 from app.api.users import router as users_router
 from app.config import settings
 
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_router)
     app.include_router(llm_config_router)
     app.include_router(reviews_router)
+    app.include_router(system_settings_router)
 
     # Health check endpoint
     @app.get("/api/health", tags=["health"])

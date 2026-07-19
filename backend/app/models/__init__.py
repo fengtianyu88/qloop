@@ -1,6 +1,7 @@
 """Models package - exports all ORM models and enums."""
 
 from app.models.audit import AuditLog
+from app.models.system_settings import SystemSettings
 from app.models.notification import Notification, NotificationType
 from app.models.organization import AdminScope, OrgType, OrgUnit
 from app.models.project import (
@@ -45,6 +46,8 @@ __all__ = [
     "LLMReview",
     # Audit
     "AuditLog",
+    # System Settings
+    "SystemSettings",
     # Notification
     "Notification",
     "NotificationType",

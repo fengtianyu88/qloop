@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import type { LoginRequest } from '@/types'
-import { APP_TITLE } from '@/config'
+import { useSiteInfoStore } from '@/stores/siteInfo'
 
 const authStore = useAuthStore()
 const router = useRouter()
 const route = useRoute()
+const siteInfoStore = useSiteInfoStore()
+const APP_TITLE = computed(() => siteInfoStore.siteName)
+
+onMounted(async () => {
+  await siteInfoStore.refresh()
+})
 
 const loginFormRef = ref<FormInstance>()
 const loading = ref(false)
