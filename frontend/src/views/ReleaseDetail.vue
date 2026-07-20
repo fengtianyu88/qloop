@@ -215,6 +215,82 @@ function formatTime(t: string | null): string {
   return t.replace('T', ' ').slice(0, 19)
 }
 
+// 从 MinIO 对象路径中提取文件名
+function fileNameFromPath(path: string | null | undefined): string {
+  if (!path) return ''
+  // path 形如 "releases/{release_id}/code_package/{filename}" 或 "releases/.../uuid_filename.zip"
+  const parts = path.split('/')
+  return parts[parts.length - 1] || path
+}
+
+// 文件大小估算(根据路径无法准确获取,返回 null)
+function formatBytes(_bytes: number | null | undefined): string {
+  if (!_bytes) return '—'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let i = 0
+  let n = _bytes
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024
+    i++
+  }
+  return `${n.toFixed(1)} ${units[i]}`
+}
+
+// 计算交付物列表(用于 v-for 渲染)
+interface ArtifactItem {
+  fileType: 'code_package' | 'test_report' | 'review_report'
+  label: string
+  path: string | null
+  fileName: string
+  uploaderName: string | null
+  uploaderId: string | null
+  uploadedAt: string | null
+  icon: string  // 用于显示的图标名(可选)
+}
+
+const artifacts = computed<ArtifactItem[]>(() => {
+  if (!release.value) return []
+  const r = release.value
+  const items: ArtifactItem[] = []
+  if (r.code_package_path) {
+    items.push({
+      fileType: 'code_package',
+      label: '代码包',
+      path: r.code_package_path,
+      fileName: fileNameFromPath(r.code_package_path),
+      uploaderName: r.code_package_uploader_name,
+      uploaderId: r.code_package_uploaded_by,
+      uploadedAt: r.code_package_uploaded_at,
+      icon: 'Files',
+    })
+  }
+  if (r.test_report_path) {
+    items.push({
+      fileType: 'test_report',
+      label: '测试报告',
+      path: r.test_report_path,
+      fileName: fileNameFromPath(r.test_report_path),
+      uploaderName: r.test_report_uploader_name,
+      uploaderId: r.test_report_uploaded_by,
+      uploadedAt: r.test_report_uploaded_at,
+      icon: 'Document',
+    })
+  }
+  if (r.review_report_path) {
+    items.push({
+      fileType: 'review_report',
+      label: '评审报告',
+      path: r.review_report_path,
+      fileName: fileNameFromPath(r.review_report_path),
+      uploaderName: r.review_report_uploader_name,
+      uploaderId: r.review_report_uploaded_by,
+      uploadedAt: r.review_report_uploaded_at,
+      icon: 'Notebook',
+    })
+  }
+  return items
+})
+
 function dimensionEntries(scores: Record<string, number> | null): [string, number][] {
   if (!scores) return []
   return Object.entries(scores)
@@ -485,30 +561,81 @@ onMounted(async () => {
         </el-button>
       </el-card>
 
-      <!-- 已释放下载 -->
-      <el-card class="table-card" shadow="never" v-if="isReleased">
-        <template #header><span>下载</span></template>
-        <el-result icon="success" title="该释放已完成" sub-title="可下载相关交付物">
-          <template #extra>
-            <div class="download-links">
-              <el-button v-if="release.download_link" type="primary" @click="openLink(release.download_link)">
-                <el-icon><Download /></el-icon>下载交付包
+      <!-- 交付物列表(所有状态可见) -->
+      <el-card class="table-card" shadow="never">
+        <template #header>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span>交付物</span>
+            <el-tag v-if="isReleased" type="success" size="small">已释放</el-tag>
+            <el-tag v-else-if="artifacts.length > 0" type="warning" size="small">{{ artifacts.length }} 个文件</el-tag>
+          </div>
+        </template>
+
+        <!-- 变更点描述 -->
+        <el-alert
+          v-if="release.change_notes"
+          type="info"
+          :closable="false"
+          show-icon
+          :title="`变更点描述：${release.change_notes}`"
+          style="margin-bottom: 12px"
+        />
+
+        <!-- 交付物表格 -->
+        <el-table :data="artifacts" border stripe>
+          <el-table-column label="文件名" min-width="280">
+            <template #default="{ row }">
+              <div style="display:flex;align-items:center;gap:6px">
+                <el-icon style="color:#409eff"><Document /></el-icon>
+                <span :title="row.fileName" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.fileName }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" width="120">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.fileType === 'code_package' ? 'warning' : row.fileType === 'test_report' ? 'success' : 'danger'">
+                {{ row.label }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="上传人" width="150">
+            <template #default="{ row }">
+              <span v-if="row.uploaderName">{{ row.uploaderName }}</span>
+              <span v-else-if="row.uploaderId" class="mono-id">{{ row.uploaderId.slice(0, 8) }}…</span>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="上传时间" width="170">
+            <template #default="{ row }">{{ formatTime(row.uploadedAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                type="primary"
+                link
+                :loading="downloading === row.fileType"
+                @click="downloadArtifactFile(row.fileType)"
+              >
+                <el-icon><Download /></el-icon>下载
               </el-button>
-              <el-button v-if="release.code_package_path" :loading="downloading === 'code_package'" @click="downloadArtifactFile('code_package')">
-                <el-icon><Download /></el-icon>代码包
-              </el-button>
-              <el-button v-if="release.test_report_path" :loading="downloading === 'test_report'" @click="downloadArtifactFile('test_report')">
-                <el-icon><Download /></el-icon>测试报告
-              </el-button>
-              <el-button v-if="release.review_report_path" :loading="downloading === 'review_report'" @click="downloadArtifactFile('review_report')">
-                <el-icon><Download /></el-icon>评审报告
-              </el-button>
-              <span v-if="release.link_expiry" class="expiry-text">
-                链接有效期至：{{ formatTime(release.link_expiry) }}
-              </span>
-            </div>
-          </template>
-        </el-result>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <!-- 已释放时的完整交付包下载 -->
+        <div v-if="isReleased" style="margin-top:12px;padding-top:12px;border-top:1px dashed #e4e7ed">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <el-button v-if="release.download_link" type="primary" @click="openLink(release.download_link)">
+              <el-icon><Download /></el-icon>下载完整交付包
+            </el-button>
+            <span v-if="release.link_expiry" class="expiry-text" style="color:#909399;font-size:12px">
+              预签名链接有效期至：{{ formatTime(release.link_expiry) }}
+            </span>
+          </div>
+        </div>
+
+        <!-- 空状态 -->
+        <el-empty v-if="artifacts.length === 0" description="暂无已上传的交付物" :image-size="80" />
       </el-card>
     </template>
   </div>
