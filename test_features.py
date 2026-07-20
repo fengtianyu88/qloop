@@ -100,7 +100,7 @@ def test_auth() -> None:
     client = httpx.Client(base_url=BASE, timeout=TIMEOUT)
 
     # 1.1 正确凭据登录
-    data = login(client, "admin", "admin123")
+    data = login(client, "admin", "Admin@123")
     check(s, "管理员登录成功", data is not None and "access_token" in data,
           detail=str(data)[:200] if data else "no token")
     admin_token = data["access_token"] if data else ""
@@ -1276,7 +1276,7 @@ def test_permissions(admin_token: str, users: dict, projects: dict) -> None:
 def minio_is_up() -> bool:
     try:
         with httpx.Client(timeout=3.0) as c:
-            r = c.get("http://localhost:9000/minio/health/live")
+            r = c.get("http://localhost:9100/minio/health/live")
             return r.status_code == 200
     except Exception:
         return False
@@ -1288,11 +1288,11 @@ def main() -> int:
     print("=" * 72)
 
     minio_up = minio_is_up()
-    print(f"\n[环境] MinIO: {'就绪 (9000)' if minio_up else '未就绪 (文件上传测试将跳过)'}\n")
+    print(f"\n[环境] MinIO: {'就绪 (9100)' if minio_up else '未就绪 (文件上传测试将跳过)'}\n")
 
     # 登录 admin
     client = httpx.Client(base_url=BASE, timeout=TIMEOUT)
-    admin_data = login(client, "admin", "admin123")
+    admin_data = login(client, "admin", "Admin@123")
     client.close()
     if not admin_data:
         print("[FATAL] admin 登录失败, 终止测试")

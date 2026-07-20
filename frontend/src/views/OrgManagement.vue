@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { Download, Upload } from '@element-plus/icons-vue'
 import { getOrgTree, createOrg, createAdminScope, getAdminScopes, deleteAdminScope, getOrgAdminScopes } from '@/api/organizations'
 import { getUsers } from '@/api/users'
+import { downloadOrganizationsTemplate, importOrganizations } from '@/api/imports'
+import { useAuthStore } from '@/stores/auth'
 import type {
   AdminScope,
   OrgTreeNode,
@@ -10,6 +13,8 @@ import type {
   OrgUnitCreate,
   User,
 } from '@/types'
+
+const authStore = useAuthStore()
 
 const treeData = ref<OrgTreeNode[]>([])
 const loading = ref(false)
@@ -42,6 +47,44 @@ async function loadTree() {
     // 错误已统一提示
   } finally {
     loading.value = false
+  }
+}
+
+async function handleDownloadTemplate() {
+  try {
+    const blob = await downloadOrganizationsTemplate()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'organizations_template.xlsx'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    ElMessage.error('下载模板失败')
+  }
+}
+
+const importInputRef = ref<HTMLInputElement | null>(null)
+function handleImportClick() {
+  importInputRef.value?.click()
+}
+async function handleImportFile(e: Event) {
+  const target = e.target as HTMLInputElement
+  if (!target.files || target.files.length === 0) return
+  const file = target.files[0]
+  try {
+    const res = await importOrganizations(file)
+    ElMessage.success(`导入完成：成功 ${res.success} 个，失败 ${res.failed} 个`)
+    if (res.errors.length > 0) {
+      ElMessageBox.alert(res.errors.slice(0, 5).join('\n'), '失败详情', { type: 'warning' })
+    }
+    await loadTree()  // 刷新组织树
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '导入失败')
+  } finally {
+    target.value = ''  // 清空,允许重复选择同一文件
   }
 }
 
@@ -240,7 +283,18 @@ onMounted(async () => {
 
 <template>
   <div class="page-container">
-    <h2 class="page-title">组织管理</h2>
+    <div class="list-header">
+      <h2 class="page-title">组织管理</h2>
+      <div v-if="authStore.isAdmin" class="list-header-actions">
+        <el-button size="default" @click="handleDownloadTemplate">
+          <el-icon><Download /></el-icon>下载模板
+        </el-button>
+        <el-button size="default" @click="handleImportClick">
+          <el-icon><Upload /></el-icon>批量导入
+        </el-button>
+        <input ref="importInputRef" type="file" accept=".xlsx,.xls" style="display:none" @change="handleImportFile" />
+      </div>
+    </div>
 
     <el-row :gutter="20">
       <!-- 组织树 -->
@@ -444,6 +498,23 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.list-header .page-title {
+  margin: 0;
+}
+
+.list-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .card-header {
   display: flex;
   align-items: center;

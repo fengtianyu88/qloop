@@ -57,7 +57,3 @@ minio_data/
 # Redis persistence
 dump.rdb
 *.rdb
-
-# Backup files
-*.bak
-*.bak.*

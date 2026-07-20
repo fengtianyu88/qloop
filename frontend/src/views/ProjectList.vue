@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { Download, Upload } from '@element-plus/icons-vue'
 import { getProjects, createProject } from '@/api/projects'
+import { downloadProjectsTemplate, importProjects } from '@/api/imports'
 import { useAuthStore } from '@/stores/auth'
 import type { Project, ProjectCreate } from '@/types'
 
@@ -33,6 +35,44 @@ async function loadProjects() {
     // 错误已统一提示
   } finally {
     loading.value = false
+  }
+}
+
+async function handleDownloadTemplate() {
+  try {
+    const blob = await downloadProjectsTemplate()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'projects_template.xlsx'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    ElMessage.error('下载模板失败')
+  }
+}
+
+const importInputRef = ref<HTMLInputElement | null>(null)
+function handleImportClick() {
+  importInputRef.value?.click()
+}
+async function handleImportFile(e: Event) {
+  const target = e.target as HTMLInputElement
+  if (!target.files || target.files.length === 0) return
+  const file = target.files[0]
+  try {
+    const res = await importProjects(file)
+    ElMessage.success(`导入完成：成功 ${res.success} 个，失败 ${res.failed} 个`)
+    if (res.errors.length > 0) {
+      ElMessageBox.alert(res.errors.slice(0, 5).join('\n'), '失败详情', { type: 'warning' })
+    }
+    await loadProjects()  // 刷新列表
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '导入失败')
+  } finally {
+    target.value = ''  // 清空,允许重复选择同一文件
   }
 }
 
@@ -180,6 +220,13 @@ onMounted(() => {
         >
           <el-icon><Plus /></el-icon>创建项目
         </el-button>
+        <el-button size="default" @click="handleDownloadTemplate">
+          <el-icon><Download /></el-icon>下载模板
+        </el-button>
+        <el-button size="default" @click="handleImportClick">
+          <el-icon><Upload /></el-icon>批量导入
+        </el-button>
+        <input ref="importInputRef" type="file" accept=".xlsx,.xls" style="display:none" @change="handleImportFile" />
       </div>
     </div>
 

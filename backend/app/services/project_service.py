@@ -314,3 +314,90 @@ async def _enrich_projects(db: AsyncSession, projects: List[Project]) -> None:
         # Use object.__setattr__ to bypass SQLAlchemy attribute events.
         object.__setattr__(p, "pm_name", name_map.get(p.pm_user_id))
         object.__setattr__(p, "latest_activity_at", latest_map.get(p.id))
+
+
+async def delete_version(db: AsyncSession, version_id: uuid.UUID) -> bool:
+    """Delete a version and cascade-delete its releases/external_recipients.
+
+    Refuses if any associated release has status == RELEASED.
+    Returns True if deleted, False if not found.
+    Raises ValueError if a release is already released.
+    """
+    from app.models.project import Release, ReleaseStatus
+    result = await db.execute(select(Version).where(Version.id == version_id))
+    version = result.scalar_one_or_none()
+    if version is None:
+        return False
+
+    # Check if any release is already RELEASED
+    rel_result = await db.execute(
+        select(Release)
+        .where(Release.version_id == version_id)
+        .where(Release.status == ReleaseStatus.RELEASED)
+    )
+    released_releases = rel_result.scalars().all()
+    if released_releases:
+        raise ValueError(
+            f"Cannot delete version {version.version_number}: "
+            f"{len(released_releases)} release(s) already released"
+        )
+
+    await db.delete(version)
+    await db.commit()
+    return True
+
+
+async def list_versions_with_release_status(
+    db: AsyncSession, project_id: uuid.UUID
+) -> List[dict]:
+    """List all versions of a project with the latest release status.
+
+    Returns a list of plain dicts (not Version ORM instances) so we can
+    attach an extra `latest_release_status` field without messing with
+    the ORM mapper.
+    """
+    from app.models.project import Release, ReleaseStatus, Version
+
+    stmt = (
+        select(Version, Release.status)
+        .select_from(Version)
+        .outerjoin(Release, Release.version_id == Version.id)
+        .where(Version.project_id == project_id)
+        .order_by(Version.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    # Aggregate: for each version, keep the "highest" status if multiple
+    # releases exist (released > review_failed > pending_confirm > *_pending_review > draft)
+    by_id: dict = {}
+    priority = {
+        ReleaseStatus.RELEASED: 6,
+        ReleaseStatus.REVIEW_FAILED: 5,
+        ReleaseStatus.PENDING_CONFIRM: 4,
+        ReleaseStatus.EXPERT_PENDING_REVIEW: 3,
+        ReleaseStatus.TEST_PENDING_REVIEW: 2,
+        ReleaseStatus.CODE_PENDING_REVIEW: 1,
+        ReleaseStatus.DRAFT: 0,
+    }
+    for ver, rel_status in rows:
+        if ver.id not in by_id:
+            by_id[ver.id] = {
+                "id": ver.id,
+                "version_number": ver.version_number,
+                "description": ver.description,
+                "developer_id": ver.developer_id,
+                "tester_id": ver.tester_id,
+                "expert_id": ver.expert_id,
+                "project_id": ver.project_id,
+                "created_at": ver.created_at,
+                "updated_at": ver.updated_at,
+                "latest_release_status": None,
+            }
+        if rel_status is not None:
+            cur = by_id[ver.id]["latest_release_status"]
+            if cur is None or priority.get(rel_status, 0) > priority.get(cur, 0):
+                by_id[ver.id]["latest_release_status"] = rel_status
+
+    return list(by_id.values())
+

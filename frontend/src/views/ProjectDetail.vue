@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { getProject, addMember, updateMember, deleteMember, createVersion } from '@/api/projects'
 import { getReleasesByVersion } from '@/api/releases'
+import request from '@/api/request'
 import { getUsers } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
 import { roleLabel } from '@/utils/status'
@@ -30,8 +31,11 @@ const loading = ref(false)
 const userMap = ref<Record<string, User>>({})
 const userList = ref<User[]>([])
 
-// 版本列表（后端暂无列表接口，使用本地态，创建后即时展示）
-const versions = ref<Version[]>([])
+// 版本列表（含每个版本最新 release 状态，用于判断是否可删除）
+interface VersionWithStatus extends Version {
+  latest_release_status?: string | null
+}
+const versions = ref<VersionWithStatus[]>([])
 
 // 是否为当前项目的 PM
 const isPm = computed(
@@ -48,6 +52,31 @@ async function viewRelease(versionId: string) {
     }
   } catch {
     ElMessage.error('获取释放列表失败')
+  }
+}
+
+async function handleDeleteVersion(row: VersionWithStatus) {
+  // 已释放的版本不允许删除
+  if (row.latest_release_status === 'released') {
+    ElMessage.warning('该版本已释放，不可删除')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除版本「${row.version_number}」吗？此操作不可恢复。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return  // 用户取消
+  }
+  try {
+    await request.delete(`/projects/${projectId.value}/versions/${row.id}`)
+    ElMessage.success('版本已删除')
+    await loadVersions()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || '删除失败'
+    ElMessage.error(msg)
   }
 }
 
@@ -83,6 +112,15 @@ async function loadUsers() {
     userMap.value = map
   } catch {
     userList.value = []
+  }
+}
+
+async function loadVersions() {
+  try {
+    const data = await request.get(`/projects/${projectId.value}/versions`)
+    versions.value = (data || []) as unknown as VersionWithStatus[]
+  } catch {
+    versions.value = []
   }
 }
 
@@ -251,7 +289,7 @@ async function handleCreateVersion() {
         expert_id: versionForm.expert_id || undefined,
       })
       ElMessage.success('版本创建成功（已自动生成草稿释放）')
-      versions.value.unshift(created)
+      await loadVersions()  // 重新加载以获取 latest_release_status
       versionDialogVisible.value = false
     } catch {
       // 错误已统一提示
@@ -268,6 +306,7 @@ function goBack() {
 onMounted(async () => {
   await loadProject()
   await loadUsers()
+  await loadVersions()
 })
 </script>
 
@@ -368,9 +407,18 @@ onMounted(async () => {
         <el-table-column prop="created_at" label="创建时间" width="170">
           <template #default="{ row }">{{ row.created_at?.replace('T', ' ').slice(0, 19) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link @click="viewRelease(row.id)">查看释放</el-button>
+            <el-button
+              v-if="isPm"
+              type="danger"
+              link
+              :disabled="row.latest_release_status === 'released'"
+              @click="handleDeleteVersion(row)"
+            >
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>

@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { Download, Upload } from '@element-plus/icons-vue'
 import {
   getUsers,
   createUser,
   updateUser,
   deleteUser,
 } from '@/api/users'
+import { downloadUsersTemplate, importUsers } from '@/api/imports'
+import { useAuthStore } from '@/stores/auth'
 import { roleLabel } from '@/utils/status'
 import type {
   SystemRole,
@@ -15,6 +18,8 @@ import type {
   UserListParams,
   UserUpdate,
 } from '@/types'
+
+const authStore = useAuthStore()
 
 const list = ref<User[]>([])
 const total = ref(0)
@@ -42,6 +47,44 @@ async function loadList() {
     // 错误已统一提示
   } finally {
     loading.value = false
+  }
+}
+
+async function handleDownloadTemplate() {
+  try {
+    const blob = await downloadUsersTemplate()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'users_template.xlsx'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    ElMessage.error('下载模板失败')
+  }
+}
+
+const importInputRef = ref<HTMLInputElement | null>(null)
+function handleImportClick() {
+  importInputRef.value?.click()
+}
+async function handleImportFile(e: Event) {
+  const target = e.target as HTMLInputElement
+  if (!target.files || target.files.length === 0) return
+  const file = target.files[0]
+  try {
+    const res = await importUsers(file)
+    ElMessage.success(`导入完成：成功 ${res.success} 个，失败 ${res.failed} 个`)
+    if (res.errors.length > 0) {
+      ElMessageBox.alert(res.errors.slice(0, 5).join('\n'), '失败详情', { type: 'warning' })
+    }
+    await loadList()  // 刷新列表
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '导入失败')
+  } finally {
+    target.value = ''  // 清空,允许重复选择同一文件
   }
 }
 
@@ -207,9 +250,20 @@ onMounted(() => {
   <div class="page-container">
     <div class="list-header">
       <h2 class="page-title">用户管理</h2>
-      <el-button type="primary" @click="openCreateDialog">
-        <el-icon><Plus /></el-icon>创建用户
-      </el-button>
+      <div class="list-header-actions">
+        <el-button type="primary" @click="openCreateDialog">
+          <el-icon><Plus /></el-icon>创建用户
+        </el-button>
+        <template v-if="authStore.isAdmin">
+          <el-button size="default" @click="handleDownloadTemplate">
+            <el-icon><Download /></el-icon>下载模板
+          </el-button>
+          <el-button size="default" @click="handleImportClick">
+            <el-icon><Upload /></el-icon>批量导入
+          </el-button>
+          <input ref="importInputRef" type="file" accept=".xlsx,.xls" style="display:none" @change="handleImportFile" />
+        </template>
+      </div>
     </div>
 
     <el-card class="filter-card" shadow="never">
@@ -342,6 +396,12 @@ onMounted(() => {
 
 .list-header .page-title {
   margin: 0;
+}
+
+.list-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 :deep(.dialog-scroll .el-dialog__body) {

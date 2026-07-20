@@ -60,7 +60,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES=480              # Token 过期时间 (分钟), 480=
 
 # ---------- 管理员账号 ----------
 ADMIN_USERNAME="admin"
-ADMIN_PASSWORD="admin123"                   # 首次登录后请立即修改!
+ADMIN_PASSWORD="Admin@123"                   # 首次登录后请立即修改!
 ADMIN_EMAIL="admin@company.com"
 
 # ---------- SMTP 邮件 (可选, 不配置则邮件功能静默失败) ----------
@@ -600,20 +600,6 @@ server {
         root /var/www/qloop;
         index index.html;
         try_files $uri $uri/ /index.html;
-    }
-
-    # index.html 不缓存，避免浏览器引用过期的 chunk 文件名导致模块加载失败
-    location = /index.html {
-        root /var/www/qloop;
-        add_header Cache-Control "no-cache, no-store, must-revalidate";
-        add_header Pragma "no-cache";
-        expires 0;
-    }
-
-    # 带 hash 的 chunk 文件可以长期缓存
-    location /assets/ {
-        root /var/www/qloop;
-        add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
     # API 反向代理到后端

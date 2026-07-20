@@ -3,6 +3,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.imports import router as imports_router
+from app.api.my_tasks import router as my_tasks_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
 from app.api.llm_config import router as llm_config_router
@@ -38,6 +40,8 @@ def create_app() -> FastAPI:
     )
 
     # Register all API routers
+    app.include_router(imports_router)
+    app.include_router(my_tasks_router)
     app.include_router(auth_router)
     app.include_router(users_router)
     app.include_router(organizations_router)

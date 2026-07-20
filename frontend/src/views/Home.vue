@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { searchProjects, searchReleases, exportAll } from '@/api/search'
+import { getMyTodo, getMyDone, type MyTaskItem } from '@/api/myTasks'
 import { getUsers } from '@/api/users'
 import {
   statusLabel,
@@ -191,6 +192,20 @@ async function loadUsers() {
   }
 }
 
+// 我的待办 / 已办 release 列表
+const myTodo = ref<MyTaskItem[]>([])
+const myDone = ref<MyTaskItem[]>([])
+
+async function loadMyTasks() {
+  try {
+    const [todo, done] = await Promise.all([getMyTodo(), getMyDone()])
+    myTodo.value = todo
+    myDone.value = done
+  } catch {
+    // 静默失败
+  }
+}
+
 // 导出所有：调用 /api/search/export，下载 CSV
 const exporting = ref(false)
 async function handleExportAll() {
@@ -304,6 +319,7 @@ function releaseGenericCompare(a: ReleaseListItem, b: ReleaseListItem, prop: str
 onMounted(() => {
   loadReleases()
   loadUsers()
+  loadMyTasks()
 })
 </script>
 
@@ -326,6 +342,53 @@ onMounted(() => {
         </el-button>
       </div>
     </div>
+
+    <el-row :gutter="16" style="margin-bottom: 16px">
+      <el-col :span="12">
+        <el-card shadow="never" class="table-card">
+          <template #header>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span>我的待办</span>
+              <el-tag type="warning" size="small">{{ myTodo.length }}</el-tag>
+            </div>
+          </template>
+          <el-table :data="myTodo" border stripe size="small" max-height="320" @row-click="(row: MyTaskItem) => router.push(`/releases/${row.release_id}`)">
+            <el-table-column prop="project_name" label="项目" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="version_number" label="版本号" width="120" show-overflow-tooltip />
+            <el-table-column prop="my_role" label="我的角色" width="100" />
+            <el-table-column prop="status" label="状态" width="150">
+              <template #default="{ row }">
+                <el-tag size="small">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="updated_at" label="更新时间" width="160">
+              <template #default="{ row }">{{ row.updated_at?.replace('T', ' ').slice(0, 19) }}</template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="myTodo.length === 0" description="暂无待办" :image-size="60" />
+        </el-card>
+      </el-col>
+      <el-col :span="12">
+        <el-card shadow="never" class="table-card">
+          <template #header>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span>我的已办</span>
+              <el-tag type="success" size="small">{{ myDone.length }}</el-tag>
+            </div>
+          </template>
+          <el-table :data="myDone" border stripe size="small" max-height="320" @row-click="(row: MyTaskItem) => router.push(`/releases/${row.release_id}`)">
+            <el-table-column prop="project_name" label="项目" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="version_number" label="版本号" width="120" show-overflow-tooltip />
+            <el-table-column prop="my_role" label="我的角色" width="100" />
+            <el-table-column prop="release_number" label="释放号" width="80" />
+            <el-table-column prop="updated_at" label="释放时间" width="160">
+              <template #default="{ row }">{{ row.updated_at?.replace('T', ' ').slice(0, 19) }}</template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="myDone.length === 0" description="暂无已办" :image-size="60" />
+        </el-card>
+      </el-col>
+    </el-row>
 
     <!-- 释放视图 -->
     <template v-if="viewMode === 'release'">

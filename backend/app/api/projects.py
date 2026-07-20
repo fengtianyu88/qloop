@@ -20,6 +20,8 @@ from app.schemas.project import (
 from app.services.audit_service import create_audit_log
 from app.services.permission_service import check_pm_permission, check_project_access
 from app.services.project_service import (
+    delete_version,
+    list_versions_with_release_status,
     add_project_member,
     create_project,
     create_version,
@@ -376,3 +378,72 @@ async def create_version_endpoint(
     )
 
     return VersionResponse.model_validate(version)
+
+
+@router.delete(
+    "/{project_id}/versions/{version_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_version_endpoint(
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a version (PM only). Refuses if any release is already released."""
+    is_pm = await check_pm_permission(db, current_user, project_id)
+    if not is_pm:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the project manager (or admin) can delete versions",
+        )
+
+    try:
+        deleted = await delete_version(db=db, version_id=version_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Version not found",
+        )
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="delete_version",
+        resource_type="version",
+        resource_id=str(version_id),
+        details={"project_id": str(project_id)},
+    )
+    return None
+
+
+@router.get("/{project_id}/versions")
+async def list_project_versions(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all versions of a project with latest release status.
+
+    Used by the frontend to render the version list and decide whether
+    each version can be deleted (released versions cannot).
+    """
+    project = await get_project_by_id(db=db, project_id=project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+    items = await list_versions_with_release_status(db=db, project_id=project_id)
+    # Convert enum to string for JSON serialization
+    for it in items:
+        if it.get("latest_release_status") is not None:
+            it["latest_release_status"] = it["latest_release_status"].value
+    return items
+
