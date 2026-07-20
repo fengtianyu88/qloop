@@ -2,7 +2,7 @@
 
 > English | [简体中文](README_zh-CN.md)
 
-> Version: 1.3.0  Date: 2026-07-20
+> Version: 1.3.1  Date: 2026-07-20
 
 ## About the Name
 
@@ -105,6 +105,29 @@ After the first deployment, log in with:
 **Change the password immediately after login!**
 
 ## Changelog
+
+### v1.3.1 (2026-07-20) — LLM review drawer interaction fix + progress display enhancement
+
+**Bug Fix**:
+- Fixed issue where left main page could not be clicked after review drawer opened/collapsed
+  - Root cause: `el-drawer`'s `el-overlay` still intercepted mouse events even with `:modal=false`
+  - Solution: Used `modal-class` custom class + `pointer-events: none` to let overlay pass through events, drawer itself remains clickable
+
+**Review Progress Display Enhancement**:
+- Added "Current Step" prominent card (top of drawer)
+  - Spinning Loading icon (blue) + pulse border animation
+  - Current review type + round (e.g. "Code Review · Round 2")
+  - Elapsed timer (mm:ss, updates every second)
+  - Status hint text (in progress / passed / failed / error)
+- Collapsed state shows status icon + step name + elapsed time
+- Added "Waiting for LLM response..." bouncing animation at bottom of log area
+- Heartbeat log: appends "still waiting" prompt every 5 seconds while review is in progress
+- Log deduplication: only logs when step (review_type/round/result) changes, avoiding screen spam
+
+**Engineering Improvements**:
+- Clean up all timers (polling/elapsed/heartbeat) on component unmount to avoid memory leaks
+- Show red error status card when review trigger fails
+- Reduced polling interval from 3s to 2s for faster response
 
 ### v1.3.0 (2026-07-20) — Pipeline visualization + review flow optimization
 
