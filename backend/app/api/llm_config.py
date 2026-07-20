@@ -327,8 +327,11 @@ async def test_llm_model(
 
     start = time.perf_counter()
     try:
-        # Use a short timeout for the test so the UI does not hang.
-        response = await call_llm(model, "ping", timeout=15)
+        # Use a real prompt that requires the model to return a meaningful
+        # response. This verifies the API endpoint, auth, model name, and
+        # the full request/response pipeline — not just network connectivity.
+        test_prompt = "请回复「OK,连通测试成功」这 8 个字,不要回复其他任何内容。"
+        response = await call_llm(model, test_prompt, timeout=20)
     except Exception as exc:  # pragma: no cover - defensive
         elapsed = int((time.perf_counter() - start) * 1000)
         return LLMTestResult(
@@ -343,9 +346,16 @@ async def test_llm_model(
         snippet = (response.content or "").strip().replace(chr(10), " ")
         if len(snippet) > 120:
             snippet = snippet[:120] + "…"
+        if not snippet:
+            return LLMTestResult(
+                success=False,
+                message="API 返回了空内容,请检查模型名或 API 地址是否正确",
+                model_used=response.model_used,
+                latency_ms=elapsed,
+            )
         return LLMTestResult(
             success=True,
-            message=f"连通正常。模型回复: {snippet}",
+            message=f"连通正常,API 已成功返回结果。模型回复: {snippet}",
             model_used=response.model_used,
             latency_ms=elapsed,
         )
@@ -387,7 +397,8 @@ async def test_llm_model_inline(
 
     start = time.perf_counter()
     try:
-        response = await call_llm(proto, "ping", timeout=15)
+        test_prompt = "请回复「OK,连通测试成功」这 8 个字,不要回复其他任何内容。"
+        response = await call_llm(proto, test_prompt, timeout=20)
     except Exception as exc:  # pragma: no cover
         elapsed = int((time.perf_counter() - start) * 1000)
         return LLMTestResult(
@@ -402,9 +413,16 @@ async def test_llm_model_inline(
         snippet = (response.content or "").strip().replace(chr(10), " ")
         if len(snippet) > 120:
             snippet = snippet[:120] + "…"
+        if not snippet:
+            return LLMTestResult(
+                success=False,
+                message="API 返回了空内容,请检查模型名或 API 地址是否正确",
+                model_used=response.model_used,
+                latency_ms=elapsed,
+            )
         return LLMTestResult(
             success=True,
-            message=f"连通正常。模型回复: {snippet}",
+            message=f"连通正常,API 已成功返回结果。模型回复: {snippet}",
             model_used=response.model_used,
             latency_ms=elapsed,
         )

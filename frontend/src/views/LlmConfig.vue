@@ -157,6 +157,7 @@ function openModelCreate() {
   modelForm.model_name = ''
   modelForm.priority = 1
   modelForm.is_active = true
+  dialogTestResult.value = null  // 重置测试结果,显示蓝色说明提示框
   modelDialogVisible.value = true
 }
 
@@ -170,6 +171,7 @@ function openModelEdit(row: LLMModel) {
   modelForm.model_name = row.model_name
   modelForm.priority = row.priority
   modelForm.is_active = row.is_active
+  dialogTestResult.value = null  // 重置测试结果,显示蓝色说明提示框
   modelDialogVisible.value = true
 }
 
@@ -502,7 +504,7 @@ onMounted(async () => {
               link
               :loading="testingIds.has(row.id)"
               @click="handleTestModel(row)"
-            >测试</el-button>
+            >测试 API</el-button>
             <el-button
               v-if="row.is_active"
               type="warning"
@@ -568,6 +570,26 @@ onMounted(async () => {
       width="520px"
       class="dialog-scroll"
     >
+      <el-alert
+        v-if="dialogTestResult"
+        :type="dialogTestResult.success ? 'success' : 'error'"
+        :title="dialogTestResult.success ? 'API 调用成功' : 'API 调用失败'"
+        :description="dialogTestResult.message + (dialogTestResult.latency_ms ? `（耗时 ${dialogTestResult.latency_ms}ms）` : '')"
+        show-icon
+        :closable="true"
+        style="margin-bottom: 16px"
+      />
+      <el-alert
+        v-if="!dialogTestResult"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px"
+      >
+        <template #title>
+          <span style="font-size: 12px">点击「测试调用 API」会发送一个真实请求验证:API 地址、API Key、模型名、协议格式是否正确。</span>
+        </template>
+      </el-alert>
       <el-form ref="modelFormRef" :model="modelForm" :rules="modelRules" label-width="100px">
         <el-form-item label="快速预设">
           <el-select
@@ -601,6 +623,10 @@ onMounted(async () => {
             v-model="modelForm.api_base"
             :placeholder="modelForm.protocol === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1 或 https://api.minimaxi.com/v1 或 http://localhost:11434/v1'"
           />
+          <div class="api-base-hint">
+            <el-icon size="12"><InfoFilled /></el-icon>
+            <span>系统会自动补全路径后缀(OpenAI 协议补 <code>/v1/chat/completions</code>,Anthropic 协议补 <code>/v1/messages</code>)。以下写法都可识别:根域名 / <code>/v1</code> / 完整路径。</span>
+          </div>
         </el-form-item>
         <el-form-item label="API Key" prop="api_key">
           <el-input v-model="modelForm.api_key" show-password placeholder="sk-..." />
@@ -621,18 +647,9 @@ onMounted(async () => {
           type="success"
           :loading="dialogTesting"
           @click="handleTestModelInline"
-        >测试连通性</el-button>
+        >测试调用 API</el-button>
         <el-button type="primary" :loading="modelSubmitting" @click="handleModelSubmit">确定</el-button>
       </template>
-      <el-alert
-        v-if="dialogTestResult"
-        :type="dialogTestResult.success ? 'success' : 'error'"
-        :title="dialogTestResult.success ? '连通正常' : '测试失败'"
-        :description="dialogTestResult.message + (dialogTestResult.latency_ms ? `（耗时 ${dialogTestResult.latency_ms}ms）` : '')"
-        show-icon
-        :closable="true"
-        style="margin-top: 12px"
-      />
     </el-dialog>
 
     <!-- 规则对话框 -->
@@ -724,5 +741,33 @@ onMounted(async () => {
 :deep(.dialog-scroll .el-dialog__body) {
   max-height: 60vh;
   overflow-y: auto;
+}
+
+/* API 地址提示信息 */
+.api-base-hint {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #f4f4f5;
+  border-left: 3px solid #909399;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.api-base-hint :deep(.el-icon) {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #909399;
+}
+.api-base-hint code {
+  background: #e4e7ed;
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: #303133;
 }
 </style>

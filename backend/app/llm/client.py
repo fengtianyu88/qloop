@@ -59,15 +59,60 @@ class LLMResponse:
 # ---------------------------------------------------------------------------
 # OpenAI-compatible call (/chat/completions)
 # ---------------------------------------------------------------------------
+def _build_openai_url(api_base: str) -> str:
+    """Build the OpenAI-compatible chat completions URL.
+
+    Supports all common api_base formats:
+        https://api.openai.com                          -> .../v1/chat/completions
+        https://api.openai.com/                         -> .../v1/chat/completions
+        https://api.openai.com/v1                       -> .../v1/chat/completions
+        https://api.openai.com/v1/                      -> .../v1/chat/completions
+        https://api.openai.com/v1/chat/completions      -> (as-is)
+        https://api.openai.com/chat/completions         -> (as-is, non-standard but accepted)
+    """
+    url = (api_base or "").rstrip("/")
+    if not url:
+        raise ValueError("api_base 不能为空")
+    # 已含完整路径(最常见情况),直接使用
+    if url.endswith("/chat/completions"):
+        return url
+    # 已含 /v1 前缀,只需补 /chat/completions
+    if url.endswith("/v1"):
+        return f"{url}/chat/completions"
+    # 其他情况:统一补 /v1/chat/completions
+    return f"{url}/v1/chat/completions"
+
+
+def _build_anthropic_url(api_base: str) -> str:
+    """Build the Anthropic-native messages URL.
+
+    Supports:
+        https://api.anthropic.com                  -> .../v1/messages
+        https://api.anthropic.com/                 -> .../v1/messages
+        https://api.anthropic.com/v1               -> .../v1/messages
+        https://api.anthropic.com/v1/               -> .../v1/messages
+        https://api.anthropic.com/v1/messages       -> (as-is)
+    """
+    url = (api_base or "").rstrip("/")
+    if not url:
+        raise ValueError("api_base 不能为空")
+    if url.endswith("/v1/messages"):
+        return url
+    if url.endswith("/v1"):
+        return f"{url}/messages"
+    return f"{url}/v1/messages"
+
+
 async def _call_openai(
     model: LLMModel,
     prompt: str,
     timeout: int,
 ) -> LLMResponse:
     """Call an OpenAI-compatible ``/chat/completions`` endpoint."""
-    url = model.api_base.rstrip("/")
-    if not url.endswith("/chat/completions"):
-        url = f"{url}/chat/completions"
+    try:
+        url = _build_openai_url(model.api_base)
+    except ValueError as exc:
+        return LLMResponse.failure(str(exc), model_used=model.model_name)
 
     headers = {
         "Content-Type": "application/json",
@@ -106,8 +151,16 @@ async def _call_openai(
             response.status_code,
             body,
         )
+        # 加入 URL 诊断信息,帮助用户排查 API 地址问题
+        hint = ""
+        if response.status_code == 404:
+            hint = " | URL 诊断:API 地址可能不正确(404)。请确认 api_base 是否指向 OpenAI 兼容接口根路径(系统会自动补 /v1/chat/completions)。"
+        elif response.status_code == 401:
+            hint = " | URL 诊断:认证失败(401)。请检查 api_key 是否正确。"
+        elif response.status_code == 403:
+            hint = " | URL 诊断:权限被拒(403)。请检查 api_key 是否有访问该模型的权限。"
         return LLMResponse.failure(
-            f"HTTP {response.status_code}: {body}",
+            f"HTTP {response.status_code}: {body}{hint}",
             model_used=model.model_name,
         )
 
@@ -122,7 +175,13 @@ async def _call_openai(
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
         return LLMResponse.failure(
-            "Response missing choices[0].message.content",
+            "Response missing choices[0].message.content (URL 可能不正确或返回的不是 OpenAI 协议格式)",
+            model_used=model.model_name,
+        )
+
+    if not content or not content.strip():
+        return LLMResponse.failure(
+            "模型返回空内容,请检查模型名是否正确或上下文是否超限",
             model_used=model.model_name,
         )
 
@@ -147,13 +206,10 @@ async def _call_anthropic(
           ``choices[0].message.content``; the system prompt is a top-level
           ``system`` field rather than a chat message.
     """
-    url = model.api_base.rstrip("/")
-    if not url.endswith("/v1/messages"):
-        # Allow api_base like "https://api.anthropic.com" or ".../v1"
-        if url.endswith("/v1"):
-            url = f"{url}/messages"
-        else:
-            url = f"{url}/v1/messages"
+    try:
+        url = _build_anthropic_url(model.api_base)
+    except ValueError as exc:
+        return LLMResponse.failure(str(exc), model_used=model.model_name)
 
     headers = {
         "Content-Type": "application/json",
@@ -190,8 +246,15 @@ async def _call_anthropic(
             response.status_code,
             body,
         )
+        hint = ""
+        if response.status_code == 404:
+            hint = " | URL 诊断:API 地址可能不正确(404)。请确认 api_base 是否指向 Anthropic 兼容接口根路径(系统会自动补 /v1/messages)。"
+        elif response.status_code == 401:
+            hint = " | URL 诊断:认证失败(401)。请检查 api_key 是否正确。"
+        elif response.status_code == 403:
+            hint = " | URL 诊断:权限被拒(403)。请检查 api_key 是否有访问该模型的权限。"
         return LLMResponse.failure(
-            f"HTTP {response.status_code}: {body}",
+            f"HTTP {response.status_code}: {body}{hint}",
             model_used=model.model_name,
         )
 
@@ -218,7 +281,13 @@ async def _call_anthropic(
             raise KeyError("no text block found in content")
     except (KeyError, IndexError, TypeError):
         return LLMResponse.failure(
-            "Response missing content[].text",
+            "Response missing content[].text (URL 可能不正确或返回的不是 Anthropic 协议格式)",
+            model_used=model.model_name,
+        )
+
+    if not content or not content.strip():
+        return LLMResponse.failure(
+            "模型返回空内容,请检查模型名是否正确或上下文是否超限",
             model_used=model.model_name,
         )
 

@@ -326,6 +326,22 @@ async function handleTriggerReview() {
   }
 }
 
+// 是否有评审正在进行中(从后端 reviews 列表推断,切换页面再回来状态依然正确)
+const reviewInProgress = computed(() => {
+  if (!reviews.value || reviews.value.length === 0) return false
+  // 取最新一条评审记录(列表按 created_at 倒序)
+  const latest = reviews.value[0]
+  return latest.result === 'pending'
+})
+
+// 评审中标签显示的文案
+const reviewInProgressLabel = computed(() => {
+  if (!reviewInProgress.value || !reviews.value.length) return ''
+  const latest = reviews.value[0]
+  const label = reviewTypeLabel(latest.review_type as ReviewType) || latest.review_type
+  return `LLM 评审中 · ${label} 第 ${latest.review_round} 轮`
+})
+
 // PM 确认释放
 const confirming = ref(false)
 async function handleConfirm() {
@@ -998,6 +1014,17 @@ onMounted(async () => {
           <div class="card-header">
             <span>LLM 评审结果</span>
             <div class="trigger-area">
+              <!-- LLM 评审中状态标签(从后端 reviews 推断,切换页面不丢失) -->
+              <el-tag
+                v-if="reviewInProgress"
+                type="warning"
+                size="default"
+                effect="light"
+                class="review-in-progress-tag"
+              >
+                <el-icon class="is-loading" size="14" style="margin-right: 4px"><Loading /></el-icon>
+                {{ reviewInProgressLabel }}
+              </el-tag>
               <el-select v-if="canTrigger" v-model="triggerReviewType" size="small" style="width: 160px">
                 <el-option
                   v-for="opt in reviewTypeOptions"
@@ -1284,6 +1311,21 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* LLM 评审中状态标签 */
+.review-in-progress-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  animation: pulse-tag 2s ease-in-out infinite;
+}
+@keyframes pulse-tag {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
 }
 
 .mono-id {
