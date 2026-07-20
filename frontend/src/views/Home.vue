@@ -343,16 +343,16 @@ onMounted(() => {
       </div>
     </div>
 
-    <el-row :gutter="16" style="margin-bottom: 16px">
+    <el-row :gutter="16" style="margin-bottom: 16px;display:flex;align-items:stretch">
       <el-col :span="12">
-        <el-card shadow="never" class="table-card">
+        <el-card shadow="never" class="table-card task-card">
           <template #header>
             <div style="display:flex;justify-content:space-between;align-items:center">
               <span>我的待办</span>
               <el-tag type="warning" size="small">{{ myTodo.length }}</el-tag>
             </div>
           </template>
-          <el-table :data="myTodo" border stripe size="small" max-height="320" @row-click="(row: MyTaskItem) => router.push(`/releases/${row.release_id}`)">
+          <el-table v-if="myTodo.length > 0" :data="myTodo" border stripe size="small" max-height="320" @row-click="(row: MyTaskItem) => router.push(`/releases/${row.release_id}`)">
             <el-table-column prop="project_name" label="项目" min-width="160" show-overflow-tooltip />
             <el-table-column prop="version_number" label="版本号" width="120" show-overflow-tooltip />
             <el-table-column prop="my_role" label="我的角色" width="100" />
@@ -365,18 +365,20 @@ onMounted(() => {
               <template #default="{ row }">{{ row.updated_at?.replace('T', ' ').slice(0, 19) }}</template>
             </el-table-column>
           </el-table>
-          <el-empty v-if="myTodo.length === 0" description="暂无待办" :image-size="60" />
+          <div v-else style="height:100%">
+            <el-empty description="暂无待办" :image-size="60" style="height:100%;display:flex;align-items:center;justify-content:center" />
+          </div>
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card shadow="never" class="table-card">
+        <el-card shadow="never" class="table-card task-card">
           <template #header>
             <div style="display:flex;justify-content:space-between;align-items:center">
               <span>我的已办</span>
               <el-tag type="success" size="small">{{ myDone.length }}</el-tag>
             </div>
           </template>
-          <el-table :data="myDone" border stripe size="small" max-height="320" @row-click="(row: MyTaskItem) => router.push(`/releases/${row.release_id}`)">
+          <el-table v-if="myDone.length > 0" :data="myDone" border stripe size="small" max-height="320" @row-click="(row: MyTaskItem) => router.push(`/releases/${row.release_id}`)">
             <el-table-column prop="project_name" label="项目" min-width="160" show-overflow-tooltip />
             <el-table-column prop="version_number" label="版本号" width="120" show-overflow-tooltip />
             <el-table-column prop="my_role" label="我的角色" width="100" />
@@ -385,7 +387,9 @@ onMounted(() => {
               <template #default="{ row }">{{ row.updated_at?.replace('T', ' ').slice(0, 19) }}</template>
             </el-table-column>
           </el-table>
-          <el-empty v-if="myDone.length === 0" description="暂无已办" :image-size="60" />
+          <div v-else style="height:100%">
+            <el-empty description="暂无已办" :image-size="60" style="height:100%;display:flex;align-items:center;justify-content:center" />
+          </div>
         </el-card>
       </el-col>
     </el-row>
@@ -856,5 +860,19 @@ onMounted(() => {
 .filter-actions {
   text-align: right;
   margin-top: 8px;
+}
+
+.task-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.task-card :deep(.el-card__body) {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+.task-card .el-table {
+  width: 100%;
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile } from 'element-plus'
@@ -60,6 +60,77 @@ const reviewTypeOptions: { label: string; value: ReviewType }[] = [
 ]
 const triggerReviewType = ref<ReviewType>('code_review')
 const triggering = ref(false)
+
+// 评审进度抽屉
+const reviewDrawerVisible = ref(false)
+const reviewDrawerCollapsed = ref(false)  // 收缩状态
+const reviewProgressLogs = ref<{time: string, msg: string, type: 'info'|'success'|'warning'|'error'}[]>([])
+let reviewPollingTimer: ReturnType<typeof setInterval> | null = null
+
+// 添加进度日志
+function addProgressLog(msg: string, type: 'info'|'success'|'warning'|'error' = 'info') {
+  const now = new Date()
+  const time = now.toTimeString().slice(0, 8)
+  reviewProgressLogs.value.push({ time, msg, type })
+  // 自动滚动到底部
+  nextTick(() => {
+    const el = document.querySelector('.review-log-list')
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+// 开始轮询评审状态
+function startReviewPolling() {
+  if (reviewPollingTimer) clearInterval(reviewPollingTimer)
+  reviewPollingTimer = setInterval(async () => {
+    try {
+      const data = await getReleaseReviews(releaseId.value)
+      // 找最新的评审记录
+      if (data && data.length > 0) {
+        const latest = data[0]
+        // 判断评审状态
+        if (latest.result === 'pending') {
+          addProgressLog(`评审进行中...(${latest.review_type} 第${latest.review_round}轮)`, 'info')
+        } else if (latest.result === 'passed') {
+          addProgressLog(`评审通过!总分:${latest.total_score}`, 'success')
+          addProgressLog(`结论:${latest.conclusion || '-'}`, 'info')
+          stopReviewPolling()
+        } else if (latest.result === 'failed') {
+          addProgressLog(`评审未通过。总分:${latest.total_score}`, 'warning')
+          addProgressLog(`建议:${latest.suggestions || '-'}`, 'info')
+          stopReviewPolling()
+        } else if (latest.result === 'error') {
+          addProgressLog(`评审出错,请查看评审记录`, 'error')
+          stopReviewPolling()
+        }
+      }
+      // 同步刷新 reviews 列表
+      reviews.value = data
+    } catch {
+      // 静默失败,继续轮询
+    }
+  }, 3000)  // 每 3 秒轮询一次
+}
+
+function stopReviewPolling() {
+  if (reviewPollingTimer) {
+    clearInterval(reviewPollingTimer)
+    reviewPollingTimer = null
+  }
+}
+
+// 切换抽屉收缩/展开
+function toggleReviewDrawer() {
+  reviewDrawerCollapsed.value = !reviewDrawerCollapsed.value
+}
+
+// 打开抽屉并开始轮询
+function openReviewDrawer() {
+  reviewDrawerVisible.value = true
+  reviewDrawerCollapsed.value = false
+  reviewProgressLogs.value = []
+  addProgressLog('开始触发 LLM 评审...', 'info')
+}
 
 // 根据当前状态推断默认评审类型
 function syncTriggerType() {
@@ -153,9 +224,9 @@ async function handleTriggerReview() {
   triggering.value = true
   try {
     await triggerReview(releaseId.value, triggerReviewType.value)
-    ElMessage.success('评审任务已提交，请稍后刷新查看结果')
-    // 轮询刷新评审结果
-    setTimeout(() => loadReviews(), 2000)
+    openReviewDrawer()
+    addProgressLog(`已触发${reviewTypeLabel(triggerReviewType.value)}评审`, 'info')
+    startReviewPolling()
   } catch {
     // 错误已统一提示
   } finally {
@@ -740,6 +811,51 @@ onMounted(async () => {
         <el-empty v-if="artifacts.length === 0" description="暂无已上传的交付物" :image-size="80" />
       </el-card>
     </template>
+
+    <!-- LLM 评审进度抽屉 -->
+    <el-drawer
+      v-model="reviewDrawerVisible"
+      :with-header="false"
+      :modal="false"
+      :size="reviewDrawerCollapsed ? '48px' : '420px'"
+      direction="rtl"
+      :show-close="false"
+      class="review-drawer"
+      style="position:fixed"
+    >
+      <div class="review-drawer-content" :class="{ collapsed: reviewDrawerCollapsed }">
+        <!-- 收缩状态:只显示一个展开按钮 -->
+        <div v-if="reviewDrawerCollapsed" class="drawer-collapsed-bar">
+          <el-button link @click="toggleReviewDrawer">
+            <el-icon size="20"><DArrowLeft /></el-icon>
+            <div style="writing-mode:vertical-rl;margin-top:8px">评审进度</div>
+          </el-button>
+        </div>
+        <!-- 展开状态:完整内容 -->
+        <div v-else class="drawer-expanded-content">
+          <div class="drawer-header">
+            <span>LLM 评审进度</span>
+            <el-button link @click="toggleReviewDrawer" title="向右收缩">
+              <el-icon size="18"><DArrowRight /></el-icon>
+            </el-button>
+          </div>
+          <div class="review-log-list">
+            <div
+              v-for="(log, i) in reviewProgressLogs"
+              :key="i"
+              class="review-log-item"
+              :class="'log-' + log.type"
+            >
+              <span class="log-time">{{ log.time }}</span>
+              <span class="log-msg">{{ log.msg }}</span>
+            </div>
+            <div v-if="reviewProgressLogs.length === 0" class="log-empty">
+              暂无评审进度日志
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -835,5 +951,72 @@ onMounted(async () => {
 .expiry-text {
   font-size: 12px;
   color: #909399;
+}
+
+/* LLM 评审进度抽屉 */
+.review-drawer :deep(.el-drawer__body) {
+  padding: 0;
+}
+.review-drawer-content {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.drawer-collapsed-bar {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 0;
+}
+.drawer-expanded-content {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.drawer-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e4e7ed;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: bold;
+  font-size: 14px;
+}
+.review-log-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  background: #fafafa;
+}
+.review-log-item {
+  padding: 6px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 13px;
+  line-height: 1.6;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.log-time {
+  color: #909399;
+  font-family: monospace;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.log-msg {
+  flex: 1;
+  word-break: break-word;
+}
+.log-info { color: #606266; }
+.log-success { color: #67c23a; }
+.log-warning { color: #e6a23c; }
+.log-error { color: #f56c6c; }
+.log-empty {
+  color: #c0c4cc;
+  text-align: center;
+  padding: 24px;
+  font-size: 13px;
 }
 </style>
