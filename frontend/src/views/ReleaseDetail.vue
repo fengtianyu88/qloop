@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile } from 'element-plus'
@@ -67,16 +67,57 @@ const reviewDrawerCollapsed = ref(false)  // 收缩状态
 const reviewProgressLogs = ref<{time: string, msg: string, type: 'info'|'success'|'warning'|'error'}[]>([])
 let reviewPollingTimer: ReturnType<typeof setInterval> | null = null
 
+// 评审当前状态(用于顶部醒目展示)
+const reviewCurrentStatus = ref<'idle' | 'triggering' | 'running' | 'passed' | 'failed' | 'error'>('idle')
+const reviewCurrentStep = ref('')  // 当前步骤文案
+const reviewStartedAt = ref<number | null>(null)  // 开始时间戳(毫秒)
+const reviewElapsedSec = ref(0)  // 已耗时(秒)
+let reviewElapsedTimer: ReturnType<typeof setInterval> | null = null
+let reviewHeartbeatTimer: ReturnType<typeof setInterval> | null = null
+const reviewLastLogAt = ref<number | null>(null)  // 上次产生日志的时间戳
+let lastLoggedStepKey = ''  // 上次记录日志的步骤标识(review_type + review_round + result)
+
 // 添加进度日志
 function addProgressLog(msg: string, type: 'info'|'success'|'warning'|'error' = 'info') {
   const now = new Date()
   const time = now.toTimeString().slice(0, 8)
   reviewProgressLogs.value.push({ time, msg, type })
+  reviewLastLogAt.value = Date.now()
   // 自动滚动到底部
   nextTick(() => {
     const el = document.querySelector('.review-log-list')
     if (el) el.scrollTop = el.scrollHeight
   })
+}
+
+// 格式化耗时 mm:ss
+function formatElapsed(sec: number): string {
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+// 启动已耗时计时器(每秒更新)
+function startElapsedTimer() {
+  if (reviewElapsedTimer) clearInterval(reviewElapsedTimer)
+  reviewElapsedTimer = setInterval(() => {
+    if (reviewStartedAt.value !== null) {
+      reviewElapsedSec.value = Math.floor((Date.now() - reviewStartedAt.value) / 1000)
+    }
+  }, 1000)
+}
+
+// 启动心跳计时器(每 5 秒添加一条活动日志,让用户知道评审仍在进行)
+function startHeartbeat() {
+  if (reviewHeartbeatTimer) clearInterval(reviewHeartbeatTimer)
+  reviewHeartbeatTimer = setInterval(() => {
+    if (reviewCurrentStatus.value === 'running') {
+      const sinceLastLog = reviewLastLogAt.value ? (Date.now() - reviewLastLogAt.value) / 1000 : 999
+      if (sinceLastLog >= 5) {
+        addProgressLog(`仍在等待 LLM 返回...已耗时 ${formatElapsed(reviewElapsedSec.value)}`, 'info')
+      }
+    }
+  }, 5000)
 }
 
 // 开始轮询评审状态
@@ -88,20 +129,43 @@ function startReviewPolling() {
       // 找最新的评审记录
       if (data && data.length > 0) {
         const latest = data[0]
+        const reviewLabel = reviewTypeLabel(latest.review_type as ReviewType) || latest.review_type
+        const stepKey = `${latest.review_type}|${latest.review_round}|${latest.result}`
         // 判断评审状态
         if (latest.result === 'pending') {
-          addProgressLog(`评审进行中...(${latest.review_type} 第${latest.review_round}轮)`, 'info')
+          reviewCurrentStatus.value = 'running'
+          reviewCurrentStep.value = `${reviewLabel} · 第 ${latest.review_round} 轮`
+          // 仅在步骤变化时记录日志,避免刷屏
+          if (stepKey !== lastLoggedStepKey) {
+            addProgressLog(`[${reviewCurrentStep.value}] LLM 正在分析...`, 'info')
+            lastLoggedStepKey = stepKey
+          }
         } else if (latest.result === 'passed') {
-          addProgressLog(`评审通过!总分:${latest.total_score}`, 'success')
-          addProgressLog(`结论:${latest.conclusion || '-'}`, 'info')
-          stopReviewPolling()
+          if (stepKey !== lastLoggedStepKey) {
+            reviewCurrentStatus.value = 'passed'
+            reviewCurrentStep.value = `${reviewLabel} · 已通过`
+            addProgressLog(`评审通过!总分:${latest.total_score}`, 'success')
+            addProgressLog(`结论:${latest.conclusion || '-'}`, 'info')
+            lastLoggedStepKey = stepKey
+            stopReviewPolling()
+          }
         } else if (latest.result === 'failed') {
-          addProgressLog(`评审未通过。总分:${latest.total_score}`, 'warning')
-          addProgressLog(`建议:${latest.suggestions || '-'}`, 'info')
-          stopReviewPolling()
+          if (stepKey !== lastLoggedStepKey) {
+            reviewCurrentStatus.value = 'failed'
+            reviewCurrentStep.value = `${reviewLabel} · 未通过`
+            addProgressLog(`评审未通过。总分:${latest.total_score}`, 'warning')
+            addProgressLog(`建议:${latest.suggestions || '-'}`, 'info')
+            lastLoggedStepKey = stepKey
+            stopReviewPolling()
+          }
         } else if (latest.result === 'error') {
-          addProgressLog(`评审出错,请查看评审记录`, 'error')
-          stopReviewPolling()
+          if (stepKey !== lastLoggedStepKey) {
+            reviewCurrentStatus.value = 'error'
+            reviewCurrentStep.value = `${reviewLabel} · 出错`
+            addProgressLog(`评审出错,请查看评审记录`, 'error')
+            lastLoggedStepKey = stepKey
+            stopReviewPolling()
+          }
         }
       }
       // 同步刷新 reviews 列表
@@ -109,7 +173,7 @@ function startReviewPolling() {
     } catch {
       // 静默失败,继续轮询
     }
-  }, 3000)  // 每 3 秒轮询一次
+  }, 2000)  // 每 2 秒轮询一次
 }
 
 function stopReviewPolling() {
@@ -117,7 +181,20 @@ function stopReviewPolling() {
     clearInterval(reviewPollingTimer)
     reviewPollingTimer = null
   }
+  if (reviewElapsedTimer) {
+    clearInterval(reviewElapsedTimer)
+    reviewElapsedTimer = null
+  }
+  if (reviewHeartbeatTimer) {
+    clearInterval(reviewHeartbeatTimer)
+    reviewHeartbeatTimer = null
+  }
 }
+
+// 组件卸载时清理所有 timer,避免内存泄漏
+onBeforeUnmount(() => {
+  stopReviewPolling()
+})
 
 // 切换抽屉收缩/展开
 function toggleReviewDrawer() {
@@ -129,7 +206,15 @@ function openReviewDrawer() {
   reviewDrawerVisible.value = true
   reviewDrawerCollapsed.value = false
   reviewProgressLogs.value = []
+  reviewCurrentStatus.value = 'triggering'
+  reviewCurrentStep.value = '准备触发评审'
+  reviewStartedAt.value = Date.now()
+  reviewElapsedSec.value = 0
+  reviewLastLogAt.value = null
+  lastLoggedStepKey = ''
   addProgressLog('开始触发 LLM 评审...', 'info')
+  startElapsedTimer()
+  startHeartbeat()
 }
 
 // 根据当前状态推断默认评审类型
@@ -222,13 +307,20 @@ async function doUploadReviewReport() {
 // 触发评审
 async function handleTriggerReview() {
   triggering.value = true
+  // 先打开抽屉,显示"正在提交评审请求..."
+  openReviewDrawer()
   try {
     await triggerReview(releaseId.value, triggerReviewType.value)
-    openReviewDrawer()
     addProgressLog(`已触发${reviewTypeLabel(triggerReviewType.value)}评审`, 'info')
+    reviewCurrentStatus.value = 'running'
+    reviewCurrentStep.value = `${reviewTypeLabel(triggerReviewType.value)} · 第 1 轮`
     startReviewPolling()
   } catch {
     // 错误已统一提示
+    reviewCurrentStatus.value = 'error'
+    reviewCurrentStep.value = '触发失败'
+    addProgressLog('触发评审失败,请查看日志或联系管理员', 'error')
+    stopReviewPolling()
   } finally {
     triggering.value = false
   }
@@ -1066,19 +1158,35 @@ onMounted(async () => {
       v-model="reviewDrawerVisible"
       :with-header="false"
       :modal="false"
-      :size="reviewDrawerCollapsed ? '48px' : '420px'"
+      :size="reviewDrawerCollapsed ? '48px' : '440px'"
       direction="rtl"
       :show-close="false"
+      :append-to-body="true"
+      modal-class="review-drawer-overlay"
       class="review-drawer"
-      style="position:fixed"
     >
       <div class="review-drawer-content" :class="{ collapsed: reviewDrawerCollapsed }">
-        <!-- 收缩状态:只显示一个展开按钮 -->
+        <!-- 收缩状态:只显示一个展开按钮 + 当前步骤缩略 -->
         <div v-if="reviewDrawerCollapsed" class="drawer-collapsed-bar">
-          <el-button link @click="toggleReviewDrawer">
+          <el-button link @click="toggleReviewDrawer" title="向左展开">
             <el-icon size="20"><DArrowLeft /></el-icon>
-            <div style="writing-mode:vertical-rl;margin-top:8px">评审进度</div>
           </el-button>
+          <div class="collapsed-status" :class="'status-' + reviewCurrentStatus">
+            <el-icon
+              v-if="reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering'"
+              class="is-loading"
+              size="16"
+            ><Loading /></el-icon>
+            <el-icon v-else-if="reviewCurrentStatus === 'passed'" size="16" color="#67c23a"><CircleCheck /></el-icon>
+            <el-icon v-else-if="reviewCurrentStatus === 'failed'" size="16" color="#e6a23c"><WarningFilled /></el-icon>
+            <el-icon v-else-if="reviewCurrentStatus === 'error'" size="16" color="#f56c6c"><CircleClose /></el-icon>
+          </div>
+          <div class="collapsed-text">
+            {{ reviewCurrentStep || '评审进度' }}
+            <span v-if="reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering'" class="collapsed-elapsed">
+              {{ formatElapsed(reviewElapsedSec) }}
+            </span>
+          </div>
         </div>
         <!-- 展开状态:完整内容 -->
         <div v-else class="drawer-expanded-content">
@@ -1088,6 +1196,48 @@ onMounted(async () => {
               <el-icon size="18"><DArrowRight /></el-icon>
             </el-button>
           </div>
+
+          <!-- 当前步骤醒目展示卡 -->
+          <div class="current-step-card" :class="'status-' + reviewCurrentStatus">
+            <div class="step-card-row">
+              <div class="step-icon">
+                <el-icon
+                  v-if="reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering'"
+                  class="is-loading"
+                  size="22"
+                ><Loading /></el-icon>
+                <el-icon v-else-if="reviewCurrentStatus === 'passed'" size="22" color="#67c23a"><CircleCheck /></el-icon>
+                <el-icon v-else-if="reviewCurrentStatus === 'failed'" size="22" color="#e6a23c"><WarningFilled /></el-icon>
+                <el-icon v-else-if="reviewCurrentStatus === 'error'" size="22" color="#f56c6c"><CircleClose /></el-icon>
+                <el-icon v-else size="22" color="#909399"><InfoFilled /></el-icon>
+              </div>
+              <div class="step-text">
+                <div class="step-label">当前步骤</div>
+                <div class="step-value">{{ reviewCurrentStep || '等待开始' }}</div>
+              </div>
+              <div class="step-elapsed" v-if="reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering'">
+                <div class="elapsed-label">已耗时</div>
+                <div class="elapsed-value">{{ formatElapsed(reviewElapsedSec) }}</div>
+              </div>
+            </div>
+            <div class="step-hint" v-if="reviewCurrentStatus === 'running'">
+              大模型正在分析中,请耐心等待... 通常需要 30 秒 ~ 2 分钟
+            </div>
+            <div class="step-hint" v-else-if="reviewCurrentStatus === 'triggering'">
+              正在提交评审请求...
+            </div>
+            <div class="step-hint success" v-else-if="reviewCurrentStatus === 'passed'">
+              评审已通过,可继续下一步操作
+            </div>
+            <div class="step-hint warning" v-else-if="reviewCurrentStatus === 'failed'">
+              评审未通过,请查看下方建议并改进
+            </div>
+            <div class="step-hint error" v-else-if="reviewCurrentStatus === 'error'">
+              评审出错,请查看日志或联系管理员
+            </div>
+          </div>
+
+          <div class="review-log-header">实时日志</div>
           <div class="review-log-list">
             <div
               v-for="(log, i) in reviewProgressLogs"
@@ -1100,6 +1250,10 @@ onMounted(async () => {
             </div>
             <div v-if="reviewProgressLogs.length === 0" class="log-empty">
               暂无评审进度日志
+            </div>
+            <div v-if="reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering'" class="log-pending">
+              <span class="log-dot">·</span>
+              <span>等待 LLM 返回<span class="loading-dots"><span>.</span><span>.</span><span>.</span></span></span>
             </div>
           </div>
         </div>
@@ -1203,6 +1357,14 @@ onMounted(async () => {
 }
 
 /* LLM 评审进度抽屉 */
+/* 关键修复:让 overlay 不拦截左侧页面事件,但 drawer 本身可点击 */
+:global(.review-drawer-overlay) {
+  pointer-events: none !important;
+  background: transparent !important;
+}
+:global(.review-drawer-overlay .el-drawer) {
+  pointer-events: auto;
+}
 .review-drawer :deep(.el-drawer__body) {
   padding: 0;
 }
@@ -1216,8 +1378,31 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   align-items: center;
+  padding: 12px 0 12px 0;
+  gap: 12px;
+}
+.collapsed-status {
+  display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 12px 0;
+}
+.collapsed-status .is-loading {
+  color: #409eff;
+}
+.collapsed-text {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  color: #606266;
+  text-align: center;
+  line-height: 1.4;
+  word-break: break-all;
+  max-height: 280px;
+  overflow: hidden;
+}
+.collapsed-elapsed {
+  color: #409eff;
+  font-weight: bold;
+  font-family: monospace;
 }
 .drawer-expanded-content {
   height: 100%;
@@ -1232,6 +1417,109 @@ onMounted(async () => {
   align-items: center;
   font-weight: bold;
   font-size: 14px;
+}
+
+/* 当前步骤醒目展示卡 */
+.current-step-card {
+  margin: 12px 14px 8px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: #f0f7ff;
+  border-left: 4px solid #409eff;
+  transition: all 0.3s;
+}
+.current-step-card.status-triggering,
+.current-step-card.status-running {
+  background: linear-gradient(135deg, #f0f7ff 0%, #e6f1ff 100%);
+  border-left-color: #409eff;
+  animation: pulse-border 2s ease-in-out infinite;
+}
+.current-step-card.status-passed {
+  background: #f0f9eb;
+  border-left-color: #67c23a;
+}
+.current-step-card.status-failed {
+  background: #fdf6ec;
+  border-left-color: #e6a23c;
+}
+.current-step-card.status-error {
+  background: #fef0f0;
+  border-left-color: #f56c6c;
+}
+.current-step-card.status-idle {
+  background: #f4f4f5;
+  border-left-color: #909399;
+}
+@keyframes pulse-border {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(64, 158, 255, 0); }
+}
+.step-card-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.step-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.step-text {
+  flex: 1;
+  min-width: 0;
+}
+.step-label {
+  font-size: 11px;
+  color: #909399;
+  margin-bottom: 2px;
+}
+.step-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+  word-break: break-word;
+  line-height: 1.3;
+}
+.step-elapsed {
+  flex-shrink: 0;
+  text-align: right;
+}
+.elapsed-label {
+  font-size: 11px;
+  color: #909399;
+  margin-bottom: 2px;
+}
+.elapsed-value {
+  font-size: 18px;
+  font-weight: bold;
+  color: #409eff;
+  font-family: monospace;
+  line-height: 1;
+}
+.step-hint {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(0,0,0,0.08);
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
+}
+.step-hint.success { color: #67c23a; }
+.step-hint.warning { color: #e6a23c; }
+.step-hint.error { color: #f56c6c; }
+
+.review-log-header {
+  padding: 8px 16px 4px;
+  font-size: 12px;
+  color: #909399;
+  font-weight: 500;
+  background: #fafafa;
 }
 .review-log-list {
   flex: 1;
@@ -1267,6 +1555,34 @@ onMounted(async () => {
   text-align: center;
   padding: 24px;
   font-size: 13px;
+}
+.log-pending {
+  padding: 8px;
+  font-size: 12px;
+  color: #909399;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-style: italic;
+}
+.log-dot {
+  color: #409eff;
+  font-weight: bold;
+  animation: blink 1.4s infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.loading-dots span {
+  display: inline-block;
+  animation: dot-bounce 1.4s infinite;
+}
+.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dot-bounce {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
 }
 
 /* ============ 流水线方框样式 ============ */
