@@ -223,6 +223,10 @@ function syncTriggerType() {
   if (status === 'code_pending_review') triggerReviewType.value = 'code_review'
   else if (status === 'test_pending_review') triggerReviewType.value = 'test_report_review'
   else if (status === 'expert_pending_review') triggerReviewType.value = 'expert_report_review'
+  // 评审失败状态下,默认触发类型为失败的评审类型(便于用户重新触发)
+  else if (status === 'review_failed' && failedReviewType.value) {
+    triggerReviewType.value = failedReviewType.value
+  }
 }
 
 // 文件上传
@@ -315,11 +319,21 @@ async function handleTriggerReview() {
     reviewCurrentStatus.value = 'running'
     reviewCurrentStep.value = `${reviewTypeLabel(triggerReviewType.value)} · 第 1 轮`
     startReviewPolling()
-  } catch {
-    // 错误已统一提示
+  } catch (e: any) {
+    const status = e?.response?.status
+    const detail = e?.response?.data?.detail || ''
     reviewCurrentStatus.value = 'error'
     reviewCurrentStep.value = '触发失败'
-    addProgressLog('触发评审失败,请查看日志或联系管理员', 'error')
+    if (status === 412 || detail.includes('评审规则') || detail.includes('review rule')) {
+      // 评审规则未配置
+      const msg = `评审规则未配置:${detail || '请联系管理员在 LLM 配置页添加对应类型的评审规则'}`
+      ElMessage.error(msg)
+      addProgressLog(msg, 'error')
+    } else {
+      const msg = detail || '触发评审失败,请查看日志或联系管理员'
+      ElMessage.error(msg)
+      addProgressLog(msg, 'error')
+    }
     stopReviewPolling()
   } finally {
     triggering.value = false
@@ -586,7 +600,65 @@ async function handleDeleteArtifact(row: ArtifactItem) {
   }
 }
 
+// 流水线方框内删除交付物(按 file_type 直接删除)
+async function handleDeleteArtifactByType(
+  fileType: 'code_package' | 'test_report' | 'review_report',
+  fileName: string,
+) {
+  if (!release.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除交付物「${fileName}」吗?此操作不可恢复。`,
+      '删除交付物确认',
+      {
+        type: 'warning',
+        confirmButtonText: '确定删除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+  try {
+    await request.delete(`/releases/${release.value.id}/artifacts/${fileType}`)
+    ElMessage.success('交付物已删除')
+    await loadRelease()
+    await loadReviews()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || '删除失败'
+    ElMessage.error(msg)
+  }
+}
+
 // ============ 稍后评审 / 特批放行 ============
+// 评审失败时,找出失败的评审类型(用于决定哪个步骤可以重新上传/触发)
+const failedReviewType = computed<ReviewType | null>(() => {
+  if (!reviews.value || reviews.value.length === 0) return null
+  const failed = reviews.value.find(r => r.result === 'failed' || r.result === 'error')
+  return failed?.review_type || null
+})
+
+// 判断指定步骤是否可重新上传(review_failed 状态下,失败的那一步允许重新上传)
+function canReuploadAtStep(stepReviewType: ReviewType): boolean {
+  if (!release.value) return false
+  if (release.value.status !== 'review_failed') return false
+  return failedReviewType.value === stepReviewType
+}
+
+// 判断指定步骤的已上传交付物是否可删除(达到成功释放之前,上传人和管理员都可删除)
+function canDeleteArtifactByType(
+  uploaderId: string | null | undefined,
+): boolean {
+  if (!release.value) return false
+  if (isReleased.value) return false  // 已释放的不允许删除
+  if (!uploaderId) return false  // 没有上传人不允许删除
+  if (authStore.isAdmin) return true  // admin / super_admin 可删任意
+  const userId = authStore.user?.id
+  if (!userId) return false
+  return uploaderId === userId  // 其他人只能删自己上传的
+}
+
 // 是否可以跳过当前评审(稍后评审按钮)
 const canSkipReview = computed(() => {
   if (!release.value || !authStore.user) return false
@@ -677,13 +749,20 @@ const step1Status = computed<StepStatus>(() => {
   return 'completed'  // 版本已创建
 })
 
+// 评审失败时,根据本步 LLMReview.result 决定颜色,而非一刀切全红
+// 已通过的步骤保持 completed(绿),只有真正失败的那步变红
 const step2Status = computed<StepStatus>(() => {
   if (!release.value) return 'not_started'
   const status = release.value.status
   if (status === 'draft') return 'current'
   if (status === 'code_pending_review') return 'in_progress'
   if (['test_pending_review', 'expert_pending_review', 'pending_confirm', 'released'].includes(status)) return 'completed'
-  if (status === 'review_failed') return 'failed'
+  if (status === 'review_failed') {
+    const review = getReviewByType('code_review')
+    if (review?.result === 'failed' || review?.result === 'error') return 'failed'
+    if (review?.result === 'passed') return 'completed'
+    return 'current'  // 没有评审记录,说明未触发过,显示为当前可操作
+  }
   return 'not_started'
 })
 
@@ -693,7 +772,14 @@ const step3Status = computed<StepStatus>(() => {
   if (['draft', 'code_pending_review'].includes(status)) return 'not_started'
   if (status === 'test_pending_review') return 'in_progress'
   if (['expert_pending_review', 'pending_confirm', 'released'].includes(status)) return 'completed'
-  if (status === 'review_failed') return 'failed'
+  if (status === 'review_failed') {
+    const review = getReviewByType('test_report_review')
+    if (review?.result === 'failed' || review?.result === 'error') return 'failed'
+    if (review?.result === 'passed') return 'completed'
+    // 如果失败的不是本步,根据 release 已上传的字段判断是否已完成
+    if (release.value.test_report_path) return 'completed'
+    return 'not_started'
+  }
   return 'not_started'
 })
 
@@ -703,7 +789,13 @@ const step4Status = computed<StepStatus>(() => {
   if (['draft', 'code_pending_review', 'test_pending_review'].includes(status)) return 'not_started'
   if (status === 'expert_pending_review') return 'in_progress'
   if (['pending_confirm', 'released'].includes(status)) return 'completed'
-  if (status === 'review_failed') return 'failed'
+  if (status === 'review_failed') {
+    const review = getReviewByType('expert_report_review')
+    if (review?.result === 'failed' || review?.result === 'error') return 'failed'
+    if (review?.result === 'passed') return 'completed'
+    if (release.value.review_report_path) return 'completed'
+    return 'not_started'
+  }
   return 'not_started'
 })
 
@@ -719,6 +811,8 @@ const step5Status = computed<StepStatus>(() => {
 onMounted(async () => {
   await loadRelease()
   await loadReviews()
+  // 加载完 reviews 后再次同步 trigger 类型(用于 review_failed 状态下推断失败类型)
+  syncTriggerType()
 })
 </script>
 
@@ -793,6 +887,16 @@ onMounted(async () => {
                 <div><span class="label">上传时间:</span>{{ formatTime(release.code_package_uploaded_at) }}</div>
                 <div v-if="release.code_package_path">
                   <span class="label">文件名:</span>{{ fileNameFromPath(release.code_package_path) }}
+                  <el-button
+                    v-if="canDeleteArtifactByType(release.code_package_uploaded_by)"
+                    link
+                    type="danger"
+                    size="small"
+                    style="margin-left:8px"
+                    @click="handleDeleteArtifactByType('code_package', fileNameFromPath(release.code_package_path))"
+                  >
+                    <el-icon><Delete /></el-icon>删除
+                  </el-button>
                 </div>
                 <div v-if="getReviewByType('code_review')">
                   <span class="label">评审结果:</span>
@@ -805,7 +909,7 @@ onMounted(async () => {
                 </div>
               </div>
               <div class="step-actions">
-                <template v-if="release.status === 'draft'">
+                <template v-if="release.status === 'draft' || canReuploadAtStep('code_review')">
                   <el-input
                     v-model="codeChangeNotes"
                     type="textarea"
@@ -823,7 +927,9 @@ onMounted(async () => {
                   >
                     <el-button type="primary" plain size="small"><el-icon><Upload /></el-icon>选择文件</el-button>
                   </el-upload>
-                  <el-button type="primary" size="small" :loading="codeUploading" @click="doUploadCode">上传代码包</el-button>
+                  <el-button type="primary" size="small" :loading="codeUploading" @click="doUploadCode">
+                    {{ canReuploadAtStep('code_review') ? '重新上传代码包' : '上传代码包' }}
+                  </el-button>
                 </template>
                 <template v-if="release.status === 'code_pending_review'">
                   <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
@@ -864,6 +970,16 @@ onMounted(async () => {
                 <div><span class="label">上传时间:</span>{{ formatTime(release.test_report_uploaded_at) }}</div>
                 <div v-if="release.test_report_path">
                   <span class="label">文件名:</span>{{ fileNameFromPath(release.test_report_path) }}
+                  <el-button
+                    v-if="canDeleteArtifactByType(release.test_report_uploaded_by)"
+                    link
+                    type="danger"
+                    size="small"
+                    style="margin-left:8px"
+                    @click="handleDeleteArtifactByType('test_report', fileNameFromPath(release.test_report_path))"
+                  >
+                    <el-icon><Delete /></el-icon>删除
+                  </el-button>
                 </div>
                 <div v-if="getReviewByType('test_report_review')">
                   <span class="label">评审结果:</span>
@@ -876,7 +992,7 @@ onMounted(async () => {
                 </div>
               </div>
               <div class="step-actions">
-                <template v-if="release.status === 'test_pending_review'">
+                <template v-if="release.status === 'test_pending_review' || canReuploadAtStep('test_report_review')">
                   <el-upload
                     :auto-upload="false"
                     :limit="1"
@@ -887,7 +1003,11 @@ onMounted(async () => {
                   >
                     <el-button type="primary" plain size="small"><el-icon><Upload /></el-icon>选择文件</el-button>
                   </el-upload>
-                  <el-button type="primary" size="small" :loading="testUploading" @click="doUploadTest">上传测试报告</el-button>
+                  <el-button type="primary" size="small" :loading="testUploading" @click="doUploadTest">
+                    {{ canReuploadAtStep('test_report_review') ? '重新上传测试报告' : '上传测试报告' }}
+                  </el-button>
+                </template>
+                <template v-if="release.status === 'test_pending_review'">
                   <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
                     <el-icon><Refresh /></el-icon>触发评审
                   </el-button>
@@ -926,6 +1046,16 @@ onMounted(async () => {
                 <div><span class="label">上传时间:</span>{{ formatTime(release.review_report_uploaded_at) }}</div>
                 <div v-if="release.review_report_path">
                   <span class="label">文件名:</span>{{ fileNameFromPath(release.review_report_path) }}
+                  <el-button
+                    v-if="canDeleteArtifactByType(release.review_report_uploaded_by)"
+                    link
+                    type="danger"
+                    size="small"
+                    style="margin-left:8px"
+                    @click="handleDeleteArtifactByType('review_report', fileNameFromPath(release.review_report_path))"
+                  >
+                    <el-icon><Delete /></el-icon>删除
+                  </el-button>
                 </div>
                 <div v-if="getReviewByType('expert_report_review')">
                   <span class="label">评审结果:</span>
@@ -938,7 +1068,7 @@ onMounted(async () => {
                 </div>
               </div>
               <div class="step-actions">
-                <template v-if="release.status === 'expert_pending_review'">
+                <template v-if="release.status === 'expert_pending_review' || canReuploadAtStep('expert_report_review')">
                   <el-upload
                     :auto-upload="false"
                     :limit="1"
@@ -949,7 +1079,11 @@ onMounted(async () => {
                   >
                     <el-button type="primary" plain size="small"><el-icon><Upload /></el-icon>选择文件</el-button>
                   </el-upload>
-                  <el-button type="primary" size="small" :loading="reviewUploading" @click="doUploadReviewReport">上传评审报告</el-button>
+                  <el-button type="primary" size="small" :loading="reviewUploading" @click="doUploadReviewReport">
+                    {{ canReuploadAtStep('expert_report_review') ? '重新上传评审报告' : '上传评审报告' }}
+                  </el-button>
+                </template>
+                <template v-if="release.status === 'expert_pending_review'">
                   <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
                     <el-icon><Refresh /></el-icon>触发评审
                   </el-button>

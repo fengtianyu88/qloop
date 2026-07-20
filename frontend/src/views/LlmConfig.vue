@@ -348,6 +348,16 @@ const ruleSubmitting = ref(false)
 const dimensionJsonText = ref('{}')
 const promptText = ref('')
 
+// 维度阈值 JSON 默认模板(用户不知道该填什么时直接用这个)
+// 每个维度包含:阈值 threshold(0-100)、权重 weight(0-1,所有维度权重之和应为 1)、描述
+const DEFAULT_DIMENSION_TEMPLATE = {
+  completeness: { threshold: 70, weight: 0.3, description: '完整性 - 功能覆盖、文档齐全' },
+  correctness: { threshold: 70, weight: 0.4, description: '正确性 - 逻辑正确、无缺陷' },
+  performance: { threshold: 70, weight: 0.2, description: '性能 - 响应时间、资源占用' },
+  security: { threshold: 70, weight: 0.1, description: '安全性 - 漏洞、权限控制' },
+}
+const DEFAULT_DIMENSION_JSON_TEXT = JSON.stringify(DEFAULT_DIMENSION_TEMPLATE, null, 2)
+
 const ruleForm = reactive<ReviewRuleCreate & { id?: string }>({
   review_type: 'code_review',
   llm_model_id: '',
@@ -384,7 +394,7 @@ function openRuleCreate() {
   ruleForm.pass_threshold = 60
   ruleForm.dimension_thresholds = {}
   ruleForm.is_active = true
-  dimensionJsonText.value = '{}'
+  dimensionJsonText.value = DEFAULT_DIMENSION_JSON_TEXT
   promptText.value = ''
   ruleDialogVisible.value = true
 }
@@ -707,9 +717,13 @@ onMounted(async () => {
           <el-input
             v-model="dimensionJsonText"
             type="textarea"
-            :rows="4"
-            placeholder='{"completeness": 60, "correctness": 70}'
+            :rows="8"
+            placeholder='{"completeness": {"threshold": 70, "weight": 0.3, "description": "完整性"}}'
           />
+          <div class="api-base-hint">
+            <el-icon size="12"><InfoFilled /></el-icon>
+            <span>每个维度包含 <code>threshold</code>(0-100 阈值)、<code>weight</code>(0-1 权重,总和应为 1)、<code>description</code>(描述)。默认模板已填好 4 个维度:完整性、正确性、性能、安全性。可直接修改或新增维度。</span>
+          </div>
         </el-form-item>
         <el-form-item label="Prompt 模板">
           <el-input

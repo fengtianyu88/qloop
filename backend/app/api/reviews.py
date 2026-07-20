@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.models.project import Release, Version
-from app.models.review import LLMReview, ReviewType
+from app.models.review import LLMModel, LLMReview, ReviewRule, ReviewType
 from app.models.user import SystemRole, User
 from app.schemas.review import LLMReviewResponse
 from app.services.audit_service import create_audit_log
@@ -144,8 +144,44 @@ async def trigger_review(
 
     The review runs in a Celery worker; this endpoint returns immediately
     with the task ID.
+
+    Returns 412 Precondition Failed if no active review rule is configured
+    for the requested review type, so the frontend can surface a clear
+    error message to the user.
     """
     release = await _get_release_and_check_access(db, release_id, current_user)
+
+    # 预检:对应的 review_type 是否配置了启用的评审规则 + 启用的 LLM 模型
+    # 避免触发 Celery 任务后才报错,让前端能给出明确提示
+    rule_result = await db.execute(
+        select(ReviewRule)
+        .where(
+            ReviewRule.review_type == review_type,
+            ReviewRule.is_active.is_(True),
+        )
+    )
+    review_rule = rule_result.scalar_one_or_none()
+    if review_rule is None:
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED,
+            detail=(
+                f"评审规则未配置:没有为「{review_type.value}」类型配置启用的评审规则。"
+                "请联系管理员在 LLM 配置页的「评审规则管理」中添加。"
+            ),
+        )
+    # 检查规则引用的 LLM 模型是否存在且启用
+    model_result = await db.execute(
+        select(LLMModel).where(LLMModel.id == review_rule.llm_model_id)
+    )
+    llm_model = model_result.scalar_one_or_none()
+    if llm_model is None or not llm_model.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED,
+            detail=(
+                f"评审规则引用的 LLM 模型不可用:规则「{review_type.value}」"
+                "关联的模型已删除或被禁用,请联系管理员在 LLM 配置页检查。"
+            ),
+        )
 
     # Import the task lazily to avoid importing Celery/Redis at module
     # import time in contexts where they may not be configured.
