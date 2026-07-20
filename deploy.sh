@@ -60,7 +60,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES=480              # Token 过期时间 (分钟), 480=
 
 # ---------- 管理员账号 ----------
 ADMIN_USERNAME="admin"
-ADMIN_PASSWORD="Admin@123"                   # 首次登录后请立即修改!
+ADMIN_PASSWORD="admin123"                    # 首次登录后请立即修改!
 ADMIN_EMAIL="admin@company.com"
 
 # ---------- SMTP 邮件 (可选, 不配置则邮件功能静默失败) ----------

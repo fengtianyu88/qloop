@@ -2,7 +2,7 @@
 
 > English | [简体中文](README_zh-CN.md)
 
-> Version: 1.2.0  Date: 2026-07-18
+> Version: 1.3.0  Date: 2026-07-20
 
 ## About the Name
 
@@ -100,11 +100,35 @@ Read the **[Deployment Guide](docs/DEPLOYMENT.md)** for full deployment steps.
 After the first deployment, log in with:
 
 - Username: `admin`
-- Password: `Admin@123`
+- Password: `admin123`
 
 **Change the password immediately after login!**
 
 ## Changelog
+
+### v1.3.0 (2026-07-20) — Pipeline visualization + review flow optimization
+
+**Pipeline box layout on release detail page**:
+- Five step boxes stacked vertically: Version creation → Code package upload + LLM review → Test report upload + LLM review → Review report upload + LLM review → PM release confirmation
+- Left color bar indicates status (grey = not started, blue = current, orange = in progress, green = completed, red = failed)
+- Numbered circle + two-column layout (info + actions); all fields (member / upload content / time / uploader) consolidated in one box
+- LLM review progress drawer: after triggering a review, a right-side drawer streams the LLM output in real time and can be collapsed/expanded
+
+**Review flow optimization**:
+- Added "Skip Review" button: developers/testers can skip the current LLM review stage and move to the next (`POST /api/releases/{id}/skip-review`)
+- Added "Force Advance" button: project managers/admins can force-advance the current version (`POST /api/releases/{id}/force-advance`)
+
+**Version deletion permission refinement**:
+- Super admin can delete any version (including released); admin can only delete non-released versions
+- Artifact deletion permission: admin/super admin can delete any artifact; other roles can only delete artifacts they uploaded
+
+**Home page and batch operations**:
+- "My To-Do" and "My Done" panes are now equal-height with scroll support; click to jump to release detail
+- Project/User/Organization management pages add "Download Template" and "Batch Import" buttons (admin-visible); Excel templates match table structure
+- Project list adds PM/Tester/Expert columns with column filtering and sorting
+
+**Default admin password change**:
+- Changed from `Admin@123` to `admin123` (easier to remember; please change it immediately after deployment)
 
 ### v1.2.0 (2026-07-18) — Production-grade SOX compliance
 

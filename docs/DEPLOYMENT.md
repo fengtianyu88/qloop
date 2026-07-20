@@ -1,6 +1,6 @@
 # qloop — 部署指南
 
-> 版本：1.0.0  日期：2026-07-16
+> 版本：1.3.0  日期：2026-07-20
 
 ---
 
@@ -334,12 +334,12 @@ async def create_admin():
             username='admin',
             email='admin@company.com',
             full_name='超级管理员',
-            hashed_password=hash_password('Admin@123'),
+            hashed_password=hash_password('admin123'),
             system_role=SystemRole.SUPER_ADMIN,
         )
         db.add(admin)
         await db.commit()
-        print('超级管理员创建成功: admin / Admin@123')
+        print('超级管理员创建成功: admin / admin123')
 
 asyncio.run(create_admin())
 "
@@ -435,7 +435,7 @@ sudo apt install -y postfix
 ```bash
 # 检查后端
 curl http://localhost:8000/api/health
-# 预期: {"status":"healthy","app":"qloop ...","version":"1.0.0"}
+# 预期: {"status":"healthy","app":"qloop ...","version":"1.3.0"}
 
 # 检查 Redis
 redis-cli ping
@@ -569,12 +569,12 @@ async def create_admin():
             username='admin',
             email='admin@company.com',
             full_name='超级管理员',
-            hashed_password=hash_password('Admin@123'),
+            hashed_password=hash_password('admin123'),
             system_role=SystemRole.SUPER_ADMIN,
         )
         db.add(admin)
         await db.commit()
-        print('超级管理员创建成功: admin / Admin@123')
+        print('超级管理员创建成功: admin / admin123')
 asyncio.run(create_admin())
 "
 
@@ -736,7 +736,7 @@ app.add_middleware(
 1. 浏览器访问系统地址（如 `http://localhost` 或 `http://localhost:5173`）
 2. 使用超级管理员账号登录：
    - 用户名：`admin`
-   - 密码：`Admin@123`
+   - 密码：`admin123`
 3. **登录后请立即修改密码**（在「个人信息」页面）
 
 ### 7.2 配置 LLM 大模型

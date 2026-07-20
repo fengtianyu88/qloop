@@ -27,7 +27,7 @@ def create_app() -> FastAPI:
             f"{settings.APP_NAME} 后端 API — 质量闭环 · 测试驱动开发。"
             f"覆盖项目管理、版本释放流程、LLM 评审与审计日志等能力。"
         ),
-        version="1.1.0",
+        version="1.3.0",
     )
 
     # CORS configuration
@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
         return {
             "status": "healthy",
             "app": settings.APP_NAME,
-            "version": "1.1.0",
+            "version": "1.3.0",
         }
 
     return app
