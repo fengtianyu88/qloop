@@ -132,3 +132,19 @@ def minio_file_exists(object_name: str) -> bool:
         return True
     except S3Error:
         return False
+
+
+
+def minio_delete_object(object_name: str) -> None:
+    """Delete an object from MinIO.
+
+    Args:
+        object_name: The object name within the bucket.
+
+    Raises:
+        S3Error: If deletion fails (e.g., connection error).
+    """
+    minio_client.remove_object(
+        bucket_name=settings.MINIO_BUCKET,
+        object_name=object_name,
+    )

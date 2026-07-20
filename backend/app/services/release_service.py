@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.project import Release, ReleaseStatus
 from app.storage.minio_client import (
+    minio_delete_object,
     minio_generate_presigned_url,
     minio_upload_file,
 )
@@ -246,6 +247,61 @@ async def advance_release_after_review(
 
     release.status = next_status
 
+    await db.commit()
+    await db.refresh(release)
+    return release
+
+
+
+async def delete_artifact(
+    db: AsyncSession,
+    release_id: uuid.UUID,
+    file_type: str,
+) -> Optional[Release]:
+    """Delete an artifact from MinIO and clear its fields on the release.
+
+    Args:
+        db: The async database session.
+        release_id: The release ID.
+        file_type: One of 'code_package', 'test_report', 'review_report'.
+
+    Returns:
+        The updated Release object, or None if release not found.
+
+    Raises:
+        ValueError: If file_type is invalid, or if the release is already
+            released (released releases are immutable).
+    """
+    release = await get_release_by_id(db, release_id)
+    if release is None:
+        return None
+
+    if release.status == ReleaseStatus.RELEASED:
+        raise ValueError("Cannot delete artifact: release is already released")
+
+    field_map = {
+        "code_package": ("code_package_path", "code_package_uploaded_by", "code_package_uploaded_at"),
+        "test_report": ("test_report_path", "test_report_uploaded_by", "test_report_uploaded_at"),
+        "review_report": ("review_report_path", "review_report_uploaded_by", "review_report_uploaded_at"),
+    }
+    if file_type not in field_map:
+        raise ValueError(f"Invalid file_type: {file_type}")
+
+    path_attr, uploader_attr, uploaded_at_attr = field_map[file_type]
+    object_name = getattr(release, path_attr)
+    if object_name:
+        try:
+            minio_delete_object(object_name)
+        except Exception:
+            # Best-effort: log but continue to clear DB fields
+            pass
+
+    setattr(release, path_attr, None)
+    setattr(release, uploader_attr, None)
+    setattr(release, uploaded_at_attr, None)
+
+    # If deleting code_package, also clear change_notes? No - change_notes may
+    # be a project-level field; leave it alone.
     await db.commit()
     await db.refresh(release)
     return release

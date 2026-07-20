@@ -189,11 +189,12 @@ export interface Release {
   confirmed_by_name: string | null
   created_at: string
   updated_at: string
+  // Associated project ID (populated via version join in _enrich_release_response)
+  project_id: string | null
 }
 
 /** 释放列表项（含关联字段） */
 export interface ReleaseListItem extends Release {
-  project_id: string | null
   project_name: string | null
   version_number: string | null
   developer_id: string | null

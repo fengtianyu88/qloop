@@ -390,16 +390,45 @@ async def delete_version_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Delete a version (PM only). Refuses if any release is already released."""
-    is_pm = await check_pm_permission(db, current_user, project_id)
-    if not is_pm:
+    """Delete a version.
+
+    Permission rules:
+    - super_admin: can delete ANY version (including released)
+    - admin: can delete non-released versions only
+    - other roles: forbidden
+    """
+    from app.models.user import SystemRole
+
+    if current_user.system_role not in (SystemRole.ADMIN, SystemRole.SUPER_ADMIN):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the project manager (or admin) can delete versions",
+            detail="Only admin or super_admin can delete versions",
         )
 
+    # admin cannot delete released versions; super_admin can
+    if current_user.system_role == SystemRole.ADMIN:
+        # Check if any release is already released
+        from app.models.project import Release, ReleaseStatus
+        from sqlalchemy import select as _select
+        rel_result = await db.execute(
+            _select(Release).where(
+                Release.version_id == version_id,
+                Release.status == ReleaseStatus.RELEASED,
+            )
+        )
+        if rel_result.scalars().first() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot delete version: a release is already released. "
+                       "Only super_admin can delete released versions.",
+            )
+
     try:
-        deleted = await delete_version(db=db, version_id=version_id)
+        # super_admin bypasses released-release check
+        allow_released = current_user.system_role == SystemRole.SUPER_ADMIN
+        deleted = await delete_version(
+            db=db, version_id=version_id, allow_released=allow_released
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -418,7 +447,10 @@ async def delete_version_endpoint(
         action="delete_version",
         resource_type="version",
         resource_id=str(version_id),
-        details={"project_id": str(project_id)},
+        details={
+            "project_id": str(project_id),
+            "deleted_by_role": current_user.system_role.value,
+        },
     )
     return None
 

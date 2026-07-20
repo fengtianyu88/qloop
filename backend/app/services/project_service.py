@@ -316,12 +316,23 @@ async def _enrich_projects(db: AsyncSession, projects: List[Project]) -> None:
         object.__setattr__(p, "latest_activity_at", latest_map.get(p.id))
 
 
-async def delete_version(db: AsyncSession, version_id: uuid.UUID) -> bool:
+async def delete_version(
+    db: AsyncSession,
+    version_id: uuid.UUID,
+    allow_released: bool = False,
+) -> bool:
     """Delete a version and cascade-delete its releases/external_recipients.
 
-    Refuses if any associated release has status == RELEASED.
-    Returns True if deleted, False if not found.
-    Raises ValueError if a release is already released.
+    Args:
+        db: The async database session.
+        version_id: The version ID to delete.
+        allow_released: If True, bypass the released-release check
+            (used when super_admin forces deletion). Defaults to False.
+
+    Returns:
+        True if deleted, False if not found.
+    Raises:
+        ValueError: if a release is already released and allow_released=False.
     """
     from app.models.project import Release, ReleaseStatus
     result = await db.execute(select(Version).where(Version.id == version_id))
@@ -329,18 +340,19 @@ async def delete_version(db: AsyncSession, version_id: uuid.UUID) -> bool:
     if version is None:
         return False
 
-    # Check if any release is already RELEASED
-    rel_result = await db.execute(
-        select(Release)
-        .where(Release.version_id == version_id)
-        .where(Release.status == ReleaseStatus.RELEASED)
-    )
-    released_releases = rel_result.scalars().all()
-    if released_releases:
-        raise ValueError(
-            f"Cannot delete version {version.version_number}: "
-            f"{len(released_releases)} release(s) already released"
+    if not allow_released:
+        # Check if any release is already RELEASED
+        rel_result = await db.execute(
+            select(Release)
+            .where(Release.version_id == version_id)
+            .where(Release.status == ReleaseStatus.RELEASED)
         )
+        released_releases = rel_result.scalars().all()
+        if released_releases:
+            raise ValueError(
+                f"Cannot delete version {version.version_number}: "
+                f"{len(released_releases)} release(s) already released"
+            )
 
     await db.delete(version)
     await db.commit()

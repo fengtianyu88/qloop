@@ -13,6 +13,7 @@ import {
 } from '@/api/releases'
 import { getReleaseReviews, triggerReview } from '@/api/reviews'
 import { useAuthStore } from '@/stores/auth'
+import request from '@/api/request'
 import {
   reviewResultLabel,
   reviewResultTagType,
@@ -322,6 +323,90 @@ function goBack() {
 
 const canTrigger = computed(() => authStore.isDeveloper)
 
+// 是否可以删除版本:
+// - admin: 仅未释放版本
+// - super_admin: 任何版本(包括已释放)
+const canDeleteVersion = computed(() => {
+  if (!release.value || !authStore.user) return false
+  if (authStore.isSuperAdmin) return true
+  if (authStore.isAdmin) return !isReleased.value
+  return false
+})
+
+async function handleDeleteVersion() {
+  if (!release.value) return
+  const ver = release.value.version_id
+  const proj = release.value.project_id
+  if (!ver || !proj) {
+    ElMessage.error('无法确定版本或项目,删除失败')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      '确定要删除此版本吗?删除后版本及其所有释放记录将无法恢复。',
+      '删除版本确认',
+      {
+        type: 'warning',
+        confirmButtonText: '确定删除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+
+  try {
+    await request.delete(`/projects/${proj}/versions/${ver}`)
+    ElMessage.success('版本已删除')
+    router.push('/projects/' + proj)
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || '删除失败'
+    ElMessage.error(msg)
+  }
+}
+
+// 删除单个交付物的权限:
+// - 已释放(released)的 release 不可删除任何交付物
+// - admin / super_admin: 可删除任何已上传的交付物
+// - 其他角色: 只能删除自己上传的交付物(uploaderId === 当前用户 id)
+function canDeleteArtifact(row: ArtifactItem): boolean {
+  if (!release.value || isReleased.value) return false
+  if (!row.path) return false  // 没有文件不能删除
+  if (authStore.isAdmin) return true
+  // 非管理员:只能删自己上传的
+  const userId = authStore.user?.id
+  if (!userId) return false
+  return row.uploaderId === userId
+}
+
+async function handleDeleteArtifact(row: ArtifactItem) {
+  if (!release.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除交付物「${row.fileName}」吗?此操作不可恢复。`,
+      '删除交付物确认',
+      {
+        type: 'warning',
+        confirmButtonText: '确定删除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+  try {
+    await request.delete(`/releases/${release.value.id}/artifacts/${row.fileType}`)
+    ElMessage.success('交付物已删除')
+    await loadRelease()  // 重新加载以刷新 artifacts 列表
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || '删除失败'
+    ElMessage.error(msg)
+  }
+}
+
 onMounted(async () => {
   await loadRelease()
   await loadReviews()
@@ -333,6 +418,15 @@ onMounted(async () => {
     <div class="detail-header">
       <el-button @click="goBack"><el-icon><ArrowLeft /></el-icon>返回</el-button>
       <h2 class="page-title">释放详情</h2>
+      <el-button
+        v-if="canDeleteVersion"
+        type="danger"
+        plain
+        style="margin-left:auto"
+        @click="handleDeleteVersion"
+      >
+        <el-icon><Delete /></el-icon>删除版本
+      </el-button>
     </div>
 
     <template v-if="release">
@@ -608,7 +702,7 @@ onMounted(async () => {
           <el-table-column label="上传时间" width="170">
             <template #default="{ row }">{{ formatTime(row.uploadedAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="120" fixed="right">
+          <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
               <el-button
                 type="primary"
@@ -617,6 +711,14 @@ onMounted(async () => {
                 @click="downloadArtifactFile(row.fileType)"
               >
                 <el-icon><Download /></el-icon>下载
+              </el-button>
+              <el-button
+                v-if="canDeleteArtifact(row)"
+                type="danger"
+                link
+                @click="handleDeleteArtifact(row)"
+              >
+                <el-icon><Delete /></el-icon>删除
               </el-button>
             </template>
           </el-table-column>

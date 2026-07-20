@@ -129,6 +129,9 @@ class ReleaseResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # Associated project ID (populated via version join)
+    project_id: Optional[uuid.UUID] = None
+
 
 class ReleaseListResponse(BaseModel):
     """Schema for release list responses with associated fields."""
