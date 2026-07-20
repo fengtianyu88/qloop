@@ -25,6 +25,8 @@ from app.services.audit_service import create_audit_log
 from app.services.permission_service import check_pm_permission, check_project_access
 from app.services.release_service import (
     delete_artifact,
+    force_advance,
+    skip_review,
     confirm_release,
     get_release_by_id,
     upload_code_package,
@@ -476,3 +478,140 @@ async def delete_release_artifact(
 
     response = ReleaseResponse.model_validate(updated)
     return await _enrich_release_response(db, updated, response)
+
+
+
+@router.post("/{release_id}/skip-review", response_model=ReleaseResponse)
+async def skip_review_endpoint(
+    release_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Skip the current LLM review and advance to the next stage.
+
+    Permission rules:
+    - In code_pending_review: developer (who uploaded code) or admin/super_admin
+    - In test_pending_review: tester (who uploaded test report) or admin/super_admin
+    - In expert_pending_review: external_expert (who uploaded review report) or admin/super_admin
+    - Other statuses: not allowed (400)
+    """
+    from app.models.user import SystemRole
+
+    release = await _get_release_with_project_access(db, release_id, current_user)
+
+    role = current_user.system_role
+    is_admin = role in (SystemRole.ADMIN, SystemRole.SUPER_ADMIN)
+
+    # Map (status -> required uploader field)
+    status_uploader_map = {
+        ReleaseStatus.CODE_PENDING_REVIEW: "code_package_uploaded_by",
+        ReleaseStatus.TEST_PENDING_REVIEW: "test_report_uploaded_by",
+        ReleaseStatus.EXPERT_PENDING_REVIEW: "review_report_uploaded_by",
+    }
+
+    if release.status not in status_uploader_map:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot skip review in status '{release.status.value}'",
+        )
+
+    if not is_admin:
+        uploader_field = status_uploader_map[release.status]
+        uploader_id = getattr(release, uploader_field)
+        if uploader_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the uploader of the current artifact or admin can skip the review",
+            )
+
+    try:
+        updated = await skip_review(db=db, release_id=release_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Release not found",
+        )
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="skip_review",
+        resource_type="release",
+        resource_id=str(release_id),
+        details={
+            "from_status": release.status.value,
+            "to_status": updated.status.value,
+            "skipped_by_role": role.value,
+        },
+    )
+
+    response = ReleaseResponse.model_validate(updated)
+    return await _enrich_release_response(db, updated, response)
+
+
+@router.post("/{release_id}/force-advance", response_model=ReleaseResponse)
+async def force_advance_endpoint(
+    release_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Force-advance a release to the next stage, bypassing reviews.
+
+    Permission rules:
+    - Project manager (PM) or admin/super_admin only.
+    - In review stages: advance to next review stage.
+    - In pending_confirm: force-release (set status to RELEASED).
+    - In draft/released/review_failed: not allowed (400).
+    """
+    from app.models.user import SystemRole
+
+    release = await _get_release_with_project_access(db, release_id, current_user)
+
+    role = current_user.system_role
+    is_admin = role in (SystemRole.ADMIN, SystemRole.SUPER_ADMIN)
+
+    # PM check: PM of the project OR admin/super_admin
+    if not is_admin:
+        is_pm = await check_pm_permission(db, current_user, release.version.project_id)
+        if not is_pm:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the project manager or admin can force-advance",
+            )
+
+    try:
+        updated = await force_advance(db=db, release_id=release_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Release not found",
+        )
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="force_advance",
+        resource_type="release",
+        resource_id=str(release_id),
+        details={
+            "from_status": release.status.value,
+            "to_status": updated.status.value,
+            "forced_by_role": role.value,
+        },
+    )
+
+    response = ReleaseResponse.model_validate(updated)
+    return await _enrich_release_response(db, updated, response)
+

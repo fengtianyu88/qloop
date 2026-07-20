@@ -305,3 +305,106 @@ async def delete_artifact(
     await db.commit()
     await db.refresh(release)
     return release
+
+
+
+async def skip_review(
+    db: AsyncSession, release_id: uuid.UUID
+) -> Optional[Release]:
+    """Skip the current LLM review and advance to the next stage.
+
+    Same transition logic as :func:`advance_release_after_review` but
+    does not require an actual review to have been performed.
+
+    Transitions:
+        - CODE_PENDING_REVIEW -> TEST_PENDING_REVIEW
+        - TEST_PENDING_REVIEW -> EXPERT_PENDING_REVIEW
+        - EXPERT_PENDING_REVIEW -> PENDING_CONFIRM
+
+    Returns:
+        The updated Release object, or None if not found.
+    Raises:
+        ValueError: If the current status does not allow skipping.
+    """
+    release = await get_release_by_id(db, release_id)
+    if release is None:
+        return None
+
+    status_transitions = {
+        ReleaseStatus.CODE_PENDING_REVIEW: ReleaseStatus.TEST_PENDING_REVIEW,
+        ReleaseStatus.TEST_PENDING_REVIEW: ReleaseStatus.EXPERT_PENDING_REVIEW,
+        ReleaseStatus.EXPERT_PENDING_REVIEW: ReleaseStatus.PENDING_CONFIRM,
+    }
+
+    next_status = status_transitions.get(release.status)
+    if next_status is None:
+        raise ValueError(
+            f"Cannot skip review in status '{release.status.value}'"
+        )
+
+    release.status = next_status
+    await db.commit()
+    await db.refresh(release)
+    return release
+
+
+async def force_advance(
+    db: AsyncSession, release_id: uuid.UUID
+) -> Optional[Release]:
+    """Force-advance a release to the next stage, bypassing reviews.
+
+    - In review stages (code/test/expert pending_review): advance to next stage.
+    - In pending_confirm: force-release (set status to RELEASED, generate download link).
+    - In draft: not allowed (must upload code package first).
+
+    Returns:
+        The updated Release object, or None if not found.
+    Raises:
+        ValueError: If the current status does not allow force-advance.
+    """
+    release = await get_release_by_id(db, release_id)
+    if release is None:
+        return None
+
+    if release.status == ReleaseStatus.DRAFT:
+        raise ValueError("Cannot force-advance a draft release (upload code package first)")
+    if release.status == ReleaseStatus.RELEASED:
+        raise ValueError("Release is already released")
+    if release.status == ReleaseStatus.REVIEW_FAILED:
+        raise ValueError("Cannot force-advance a failed release (re-upload artifact first)")
+
+    if release.status == ReleaseStatus.PENDING_CONFIRM:
+        # Force-release: same as confirm_release but bypassing checks
+        release.status = ReleaseStatus.RELEASED
+        release.confirmed_at = datetime.now(timezone.utc)
+        # Generate download link
+        if release.code_package_path:
+            try:
+                release.download_link = minio_generate_presigned_url(
+                    release.code_package_path, expiry_hours=168
+                )
+                release.link_expiry = datetime.now(timezone.utc) + timedelta(hours=168)
+            except Exception:
+                pass
+        await db.commit()
+        await db.refresh(release)
+        return release
+
+    # Review stages: advance to next stage
+    status_transitions = {
+        ReleaseStatus.CODE_PENDING_REVIEW: ReleaseStatus.TEST_PENDING_REVIEW,
+        ReleaseStatus.TEST_PENDING_REVIEW: ReleaseStatus.EXPERT_PENDING_REVIEW,
+        ReleaseStatus.EXPERT_PENDING_REVIEW: ReleaseStatus.PENDING_CONFIRM,
+    }
+
+    next_status = status_transitions.get(release.status)
+    if next_status is None:
+        raise ValueError(
+            f"Cannot force-advance in status '{release.status.value}'"
+        )
+
+    release.status = next_status
+    await db.commit()
+    await db.refresh(release)
+    return release
+

@@ -478,6 +478,136 @@ async function handleDeleteArtifact(row: ArtifactItem) {
   }
 }
 
+// ============ 稍后评审 / 特批放行 ============
+// 是否可以跳过当前评审(稍后评审按钮)
+const canSkipReview = computed(() => {
+  if (!release.value || !authStore.user) return false
+  const status = release.value.status
+  const reviewStages = ['code_pending_review', 'test_pending_review', 'expert_pending_review']
+  if (!reviewStages.includes(status)) return false
+  if (authStore.isAdmin) return true
+  const userId = authStore.user.id
+  if (status === 'code_pending_review') return release.value.code_package_uploaded_by === userId
+  if (status === 'test_pending_review') return release.value.test_report_uploaded_by === userId
+  if (status === 'expert_pending_review') return release.value.review_report_uploaded_by === userId
+  return false
+})
+
+// 是否可以特批放行(PM 或 admin) - 简化:仅 admin/super_admin 可见
+const canForceAdvance = computed(() => {
+  if (!release.value || !authStore.user) return false
+  const status = release.value.status
+  const allowedStages = ['code_pending_review', 'test_pending_review', 'expert_pending_review', 'pending_confirm']
+  if (!allowedStages.includes(status)) return false
+  if (authStore.isAdmin) return true
+  // PM 走原有的确认释放按钮;此处仅 admin/super_admin 可见特批放行
+  return false
+})
+
+async function handleSkipReview() {
+  if (!release.value) return
+  try {
+    await ElMessageBox.confirm(
+      '确定要跳过当前评审,直接进入下一阶段吗?',
+      '稍后评审确认',
+      { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await request.post(`/releases/${releaseId.value}/skip-review`)
+    ElMessage.success('已跳过当前评审')
+    await loadRelease()
+    await loadReviews()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || '跳过评审失败'
+    ElMessage.error(msg)
+  }
+}
+
+async function handleForceAdvance() {
+  if (!release.value) return
+  try {
+    await ElMessageBox.confirm(
+      '确定要特批放行吗?此操作将跳过剩余评审直接推进流程。',
+      '特批放行确认',
+      {
+        type: 'warning',
+        confirmButtonText: '确定放行',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+  try {
+    await request.post(`/releases/${releaseId.value}/force-advance`)
+    ElMessage.success('已特批放行')
+    await loadRelease()
+    await loadReviews()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || '特批放行失败'
+    ElMessage.error(msg)
+  }
+}
+
+// ============ 流水线步骤状态 ============
+type StepStatus = 'not_started' | 'in_progress' | 'completed' | 'failed' | 'current'
+
+// 根据 review_type 获取最新的评审记录
+function getReviewByType(reviewType: ReviewType): LLMReview | null {
+  if (!reviews.value || reviews.value.length === 0) return null
+  // reviews 数组按 created_at 倒序,取第一条匹配
+  const found = reviews.value.find((r) => r.review_type === reviewType)
+  return found || null
+}
+
+const step1Status = computed<StepStatus>(() => {
+  if (!release.value) return 'not_started'
+  return 'completed'  // 版本已创建
+})
+
+const step2Status = computed<StepStatus>(() => {
+  if (!release.value) return 'not_started'
+  const status = release.value.status
+  if (status === 'draft') return 'current'
+  if (status === 'code_pending_review') return 'in_progress'
+  if (['test_pending_review', 'expert_pending_review', 'pending_confirm', 'released'].includes(status)) return 'completed'
+  if (status === 'review_failed') return 'failed'
+  return 'not_started'
+})
+
+const step3Status = computed<StepStatus>(() => {
+  if (!release.value) return 'not_started'
+  const status = release.value.status
+  if (['draft', 'code_pending_review'].includes(status)) return 'not_started'
+  if (status === 'test_pending_review') return 'in_progress'
+  if (['expert_pending_review', 'pending_confirm', 'released'].includes(status)) return 'completed'
+  if (status === 'review_failed') return 'failed'
+  return 'not_started'
+})
+
+const step4Status = computed<StepStatus>(() => {
+  if (!release.value) return 'not_started'
+  const status = release.value.status
+  if (['draft', 'code_pending_review', 'test_pending_review'].includes(status)) return 'not_started'
+  if (status === 'expert_pending_review') return 'in_progress'
+  if (['pending_confirm', 'released'].includes(status)) return 'completed'
+  if (status === 'review_failed') return 'failed'
+  return 'not_started'
+})
+
+const step5Status = computed<StepStatus>(() => {
+  if (!release.value) return 'not_started'
+  const status = release.value.status
+  if (['draft', 'code_pending_review', 'test_pending_review', 'expert_pending_review'].includes(status)) return 'not_started'
+  if (status === 'pending_confirm') return 'current'
+  if (status === 'released') return 'completed'
+  return 'not_started'
+})
+
 onMounted(async () => {
   await loadRelease()
   await loadReviews()
@@ -501,12 +631,10 @@ onMounted(async () => {
     </div>
 
     <template v-if="release">
-      <!-- 流程可视化 -->
+      <!-- 释放流水线 -->
       <el-card class="table-card" shadow="never">
-        <template #header><span>释放流程</span></template>
-        <el-steps :active="activeStep" finish-status="success" align-center>
-          <el-step v-for="(s, i) in steps" :key="i" :title="s.title" />
-        </el-steps>
+        <template #header><span>释放流水线</span></template>
+
         <el-alert
           v-if="isFailed"
           type="error"
@@ -514,132 +642,262 @@ onMounted(async () => {
           :closable="false"
           title="评审未通过"
           description="本次释放在评审环节未通过，请根据评审建议修改后重新上传。"
-          style="margin-top: 16px"
+          style="margin-bottom: 16px"
         />
-      </el-card>
 
-      <!-- 基本信息 -->
-      <el-card class="table-card" shadow="never">
-        <template #header><span>基本信息</span></template>
-        <el-descriptions :column="3" border>
-          <el-descriptions-item label="释放序号">{{ release.release_number }}</el-descriptions-item>
-          <el-descriptions-item label="版本 ID">
-            <span class="mono-id">{{ release.version_id }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="状态">
-            <el-tag :type="statusTagType(release.status)">{{ statusLabel(release.status) }}</el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="变更点" :span="3">
-            {{ release.change_notes || '—' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="创建时间">{{ formatTime(release.created_at) }}</el-descriptions-item>
-          <el-descriptions-item label="确认人">
-            <span v-if="release.confirmed_by_name">{{ release.confirmed_by_name }}</span>
-            <span v-else class="mono-id">{{ release.confirmed_by || '—' }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="确认时间">{{ formatTime(release.confirmed_at) }}</el-descriptions-item>
-        </el-descriptions>
-      </el-card>
+        <div class="pipeline">
+          <!-- 步骤 1:版本创建 -->
+          <div :class="['step-box', step1Status]">
+            <div class="step-header">
+              <span class="step-number">1</span>
+              <span>版本创建</span>
+            </div>
+            <div class="step-content">
+              <div class="step-info">
+                <div><span class="label">版本 ID:</span><span class="mono-id">{{ release.version_id }}</span></div>
+                <div><span class="label">释放序号:</span>{{ release.release_number }}</div>
+                <div>
+                  <span class="label">状态:</span>
+                  <el-tag :type="statusTagType(release.status)" size="small">{{ statusLabel(release.status) }}</el-tag>
+                </div>
+                <div><span class="label">创建时间:</span>{{ formatTime(release.created_at) }}</div>
+                <div v-if="release.change_notes"><span class="label">变更点:</span>{{ release.change_notes }}</div>
+              </div>
+              <div class="step-actions"></div>
+            </div>
+          </div>
 
+          <div class="step-connector">↓</div>
 
-      <!-- 各节点上传人/触发人 -->
-      <el-card class="table-card" shadow="never">
-        <template #header><span>节点操作人</span></template>
-        <el-descriptions :column="2" border>
-          <el-descriptions-item label="代码包上传人">
-            <span v-if="release.code_package_uploader_name">{{ release.code_package_uploader_name }}</span>
-            <span v-else class="mono-id">{{ release.code_package_uploaded_by || '—' }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="代码包上传时间">{{ formatTime(release.code_package_uploaded_at) }}</el-descriptions-item>
-          <el-descriptions-item label="测试报告上传人">
-            <span v-if="release.test_report_uploader_name">{{ release.test_report_uploader_name }}</span>
-            <span v-else class="mono-id">{{ release.test_report_uploaded_by || '—' }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="测试报告上传时间">{{ formatTime(release.test_report_uploaded_at) }}</el-descriptions-item>
-          <el-descriptions-item label="评审报告上传人">
-            <span v-if="release.review_report_uploader_name">{{ release.review_report_uploader_name }}</span>
-            <span v-else class="mono-id">{{ release.review_report_uploaded_by || '—' }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="评审报告上传时间">{{ formatTime(release.review_report_uploaded_at) }}</el-descriptions-item>
-        </el-descriptions>
-      </el-card>
+          <!-- 步骤 2:代码包上传 + LLM 评审 -->
+          <div :class="['step-box', step2Status]">
+            <div class="step-header">
+              <span class="step-number">2</span>
+              <span>代码包上传 + LLM 评审</span>
+            </div>
+            <div class="step-content">
+              <div class="step-info">
+                <div>
+                  <span class="label">上传人:</span>
+                  <span v-if="release.code_package_uploader_name">{{ release.code_package_uploader_name }}</span>
+                  <span v-else class="mono-id">{{ release.code_package_uploaded_by || '—' }}</span>
+                </div>
+                <div><span class="label">上传时间:</span>{{ formatTime(release.code_package_uploaded_at) }}</div>
+                <div v-if="release.code_package_path">
+                  <span class="label">文件名:</span>{{ fileNameFromPath(release.code_package_path) }}
+                </div>
+                <div v-if="getReviewByType('code_review')">
+                  <span class="label">评审结果:</span>
+                  <el-tag :type="reviewResultTagType(getReviewByType('code_review')!.result)" size="small">
+                    {{ reviewResultLabel(getReviewByType('code_review')!.result) }}
+                  </el-tag>
+                  <span v-if="getReviewByType('code_review')!.total_score !== null" style="margin-left:8px">
+                    分数:<b>{{ getReviewByType('code_review')!.total_score }}</b>
+                  </span>
+                </div>
+              </div>
+              <div class="step-actions">
+                <template v-if="release.status === 'draft'">
+                  <el-input
+                    v-model="codeChangeNotes"
+                    type="textarea"
+                    :rows="2"
+                    placeholder="变更点描述"
+                    style="width:100%;margin-bottom:8px"
+                  />
+                  <el-upload
+                    :auto-upload="false"
+                    :limit="1"
+                    :on-change="handleCodeFileChange"
+                    :on-exceed="() => ElMessage.warning('只能上传一个文件')"
+                    accept=".zip,.tar,.gz,.rar,.7z"
+                    style="display:inline-block"
+                  >
+                    <el-button type="primary" plain size="small"><el-icon><Upload /></el-icon>选择文件</el-button>
+                  </el-upload>
+                  <el-button type="primary" size="small" :loading="codeUploading" @click="doUploadCode">上传代码包</el-button>
+                </template>
+                <template v-if="release.status === 'code_pending_review'">
+                  <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
+                    <el-icon><Refresh /></el-icon>触发评审
+                  </el-button>
+                  <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
+                    <el-icon><Clock /></el-icon>稍后评审
+                  </el-button>
+                  <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
+                    <el-icon><Promotion /></el-icon>特批放行
+                  </el-button>
+                </template>
+              </div>
+            </div>
+            <div v-if="getReviewByType('code_review')" class="review-result-box">
+              <strong>结论:</strong> {{ getReviewByType('code_review')!.conclusion || '—' }}
+              <span v-if="getReviewByType('code_review')!.suggestions" style="margin-left:12px">
+                <strong>建议:</strong>{{ getReviewByType('code_review')!.suggestions }}
+              </span>
+            </div>
+          </div>
 
-      <!-- 文件上传区域 -->
-      <el-card class="table-card" shadow="never" v-if="release.status === 'draft'">
-        <template #header><span>代码包上传</span></template>
-        <el-form label-width="90px">
-          <el-form-item label="变更点">
-            <el-input
-              v-model="codeChangeNotes"
-              type="textarea"
-              :rows="3"
-              placeholder="请描述本次代码包的变更点"
-            />
-          </el-form-item>
-          <el-form-item label="代码包">
-            <el-upload
-              :auto-upload="false"
-              :limit="1"
-              :on-change="handleCodeFileChange"
-              :on-exceed="() => ElMessage.warning('只能上传一个文件')"
-              accept=".zip,.tar,.gz,.rar,.7z"
-            >
-              <el-button type="primary" plain><el-icon><Upload /></el-icon>选择文件</el-button>
-              <template #tip>
-                <div class="upload-tip">支持 zip / tar / gz 等压缩包格式</div>
-              </template>
-            </el-upload>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" :loading="codeUploading" @click="doUploadCode">上传代码包</el-button>
-          </el-form-item>
-        </el-form>
-      </el-card>
+          <div class="step-connector">↓</div>
 
-      <el-card class="table-card" shadow="never" v-if="release.status === 'test_pending_review'">
-        <template #header><span>测试报告上传</span></template>
-        <el-form label-width="90px">
-          <el-form-item label="测试报告">
-            <el-upload
-              :auto-upload="false"
-              :limit="1"
-              :on-change="handleTestFileChange"
-              :on-exceed="() => ElMessage.warning('只能上传一个文件')"
-              accept=".pdf,.doc,.docx,.xlsx,.zip"
-            >
-              <el-button type="primary" plain><el-icon><Upload /></el-icon>选择文件</el-button>
-              <template #tip>
-                <div class="upload-tip">支持 PDF / Word / Excel / 压缩包</div>
-              </template>
-            </el-upload>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" :loading="testUploading" @click="doUploadTest">上传测试报告</el-button>
-          </el-form-item>
-        </el-form>
-      </el-card>
+          <!-- 步骤 3:测试报告上传 + LLM 评审 -->
+          <div :class="['step-box', step3Status]">
+            <div class="step-header">
+              <span class="step-number">3</span>
+              <span>测试报告上传 + LLM 评审</span>
+            </div>
+            <div class="step-content">
+              <div class="step-info">
+                <div>
+                  <span class="label">上传人:</span>
+                  <span v-if="release.test_report_uploader_name">{{ release.test_report_uploader_name }}</span>
+                  <span v-else class="mono-id">{{ release.test_report_uploaded_by || '—' }}</span>
+                </div>
+                <div><span class="label">上传时间:</span>{{ formatTime(release.test_report_uploaded_at) }}</div>
+                <div v-if="release.test_report_path">
+                  <span class="label">文件名:</span>{{ fileNameFromPath(release.test_report_path) }}
+                </div>
+                <div v-if="getReviewByType('test_report_review')">
+                  <span class="label">评审结果:</span>
+                  <el-tag :type="reviewResultTagType(getReviewByType('test_report_review')!.result)" size="small">
+                    {{ reviewResultLabel(getReviewByType('test_report_review')!.result) }}
+                  </el-tag>
+                  <span v-if="getReviewByType('test_report_review')!.total_score !== null" style="margin-left:8px">
+                    分数:<b>{{ getReviewByType('test_report_review')!.total_score }}</b>
+                  </span>
+                </div>
+              </div>
+              <div class="step-actions">
+                <template v-if="release.status === 'test_pending_review'">
+                  <el-upload
+                    :auto-upload="false"
+                    :limit="1"
+                    :on-change="handleTestFileChange"
+                    :on-exceed="() => ElMessage.warning('只能上传一个文件')"
+                    accept=".pdf,.doc,.docx,.xlsx,.zip"
+                    style="display:inline-block"
+                  >
+                    <el-button type="primary" plain size="small"><el-icon><Upload /></el-icon>选择文件</el-button>
+                  </el-upload>
+                  <el-button type="primary" size="small" :loading="testUploading" @click="doUploadTest">上传测试报告</el-button>
+                  <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
+                    <el-icon><Refresh /></el-icon>触发评审
+                  </el-button>
+                  <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
+                    <el-icon><Clock /></el-icon>稍后评审
+                  </el-button>
+                  <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
+                    <el-icon><Promotion /></el-icon>特批放行
+                  </el-button>
+                </template>
+              </div>
+            </div>
+            <div v-if="getReviewByType('test_report_review')" class="review-result-box">
+              <strong>结论:</strong> {{ getReviewByType('test_report_review')!.conclusion || '—' }}
+              <span v-if="getReviewByType('test_report_review')!.suggestions" style="margin-left:12px">
+                <strong>建议:</strong>{{ getReviewByType('test_report_review')!.suggestions }}
+              </span>
+            </div>
+          </div>
 
-      <el-card class="table-card" shadow="never" v-if="release.status === 'expert_pending_review'">
-        <template #header><span>评审报告上传</span></template>
-        <el-form label-width="90px">
-          <el-form-item label="评审报告">
-            <el-upload
-              :auto-upload="false"
-              :limit="1"
-              :on-change="handleReviewFileChange"
-              :on-exceed="() => ElMessage.warning('只能上传一个文件')"
-              accept=".pdf,.doc,.docx,.zip"
-            >
-              <el-button type="primary" plain><el-icon><Upload /></el-icon>选择文件</el-button>
-              <template #tip>
-                <div class="upload-tip">支持 PDF / Word / 压缩包</div>
-              </template>
-            </el-upload>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" :loading="reviewUploading" @click="doUploadReviewReport">上传评审报告</el-button>
-          </el-form-item>
-        </el-form>
+          <div class="step-connector">↓</div>
+
+          <!-- 步骤 4:评审报告上传 + LLM 评审 -->
+          <div :class="['step-box', step4Status]">
+            <div class="step-header">
+              <span class="step-number">4</span>
+              <span>评审报告上传 + LLM 评审</span>
+            </div>
+            <div class="step-content">
+              <div class="step-info">
+                <div>
+                  <span class="label">上传人:</span>
+                  <span v-if="release.review_report_uploader_name">{{ release.review_report_uploader_name }}</span>
+                  <span v-else class="mono-id">{{ release.review_report_uploaded_by || '—' }}</span>
+                </div>
+                <div><span class="label">上传时间:</span>{{ formatTime(release.review_report_uploaded_at) }}</div>
+                <div v-if="release.review_report_path">
+                  <span class="label">文件名:</span>{{ fileNameFromPath(release.review_report_path) }}
+                </div>
+                <div v-if="getReviewByType('expert_report_review')">
+                  <span class="label">评审结果:</span>
+                  <el-tag :type="reviewResultTagType(getReviewByType('expert_report_review')!.result)" size="small">
+                    {{ reviewResultLabel(getReviewByType('expert_report_review')!.result) }}
+                  </el-tag>
+                  <span v-if="getReviewByType('expert_report_review')!.total_score !== null" style="margin-left:8px">
+                    分数:<b>{{ getReviewByType('expert_report_review')!.total_score }}</b>
+                  </span>
+                </div>
+              </div>
+              <div class="step-actions">
+                <template v-if="release.status === 'expert_pending_review'">
+                  <el-upload
+                    :auto-upload="false"
+                    :limit="1"
+                    :on-change="handleReviewFileChange"
+                    :on-exceed="() => ElMessage.warning('只能上传一个文件')"
+                    accept=".pdf,.doc,.docx,.zip"
+                    style="display:inline-block"
+                  >
+                    <el-button type="primary" plain size="small"><el-icon><Upload /></el-icon>选择文件</el-button>
+                  </el-upload>
+                  <el-button type="primary" size="small" :loading="reviewUploading" @click="doUploadReviewReport">上传评审报告</el-button>
+                  <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
+                    <el-icon><Refresh /></el-icon>触发评审
+                  </el-button>
+                  <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
+                    <el-icon><Clock /></el-icon>稍后评审
+                  </el-button>
+                  <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
+                    <el-icon><Promotion /></el-icon>特批放行
+                  </el-button>
+                </template>
+              </div>
+            </div>
+            <div v-if="getReviewByType('expert_report_review')" class="review-result-box">
+              <strong>结论:</strong> {{ getReviewByType('expert_report_review')!.conclusion || '—' }}
+              <span v-if="getReviewByType('expert_report_review')!.suggestions" style="margin-left:12px">
+                <strong>建议:</strong>{{ getReviewByType('expert_report_review')!.suggestions }}
+              </span>
+            </div>
+          </div>
+
+          <div class="step-connector">↓</div>
+
+          <!-- 步骤 5:PM 确认释放 -->
+          <div :class="['step-box', step5Status]">
+            <div class="step-header">
+              <span class="step-number">5</span>
+              <span>PM 确认释放</span>
+            </div>
+            <div class="step-content">
+              <div class="step-info">
+                <div>
+                  <span class="label">确认人:</span>
+                  <span v-if="release.confirmed_by_name">{{ release.confirmed_by_name }}</span>
+                  <span v-else class="mono-id">{{ release.confirmed_by || '—' }}</span>
+                </div>
+                <div><span class="label">确认时间:</span>{{ formatTime(release.confirmed_at) }}</div>
+              </div>
+              <div class="step-actions">
+                <template v-if="release.status === 'pending_confirm'">
+                  <el-button type="success" size="small" :loading="confirming" @click="handleConfirm">
+                    <el-icon><Check /></el-icon>确认释放
+                  </el-button>
+                  <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
+                    <el-icon><Promotion /></el-icon>特批放行
+                  </el-button>
+                </template>
+                <template v-if="release.status === 'released'">
+                  <el-tag type="success" size="small">已释放</el-tag>
+                  <el-button v-if="release.download_link" type="primary" size="small" @click="openLink(release.download_link)">
+                    <el-icon><Download /></el-icon>下载完整交付包
+                  </el-button>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
       </el-card>
 
       <!-- LLM 评审结果 -->
@@ -647,8 +905,8 @@ onMounted(async () => {
         <template #header>
           <div class="card-header">
             <span>LLM 评审结果</span>
-            <div v-if="canTrigger" class="trigger-area">
-              <el-select v-model="triggerReviewType" size="small" style="width: 160px">
+            <div class="trigger-area">
+              <el-select v-if="canTrigger" v-model="triggerReviewType" size="small" style="width: 160px">
                 <el-option
                   v-for="opt in reviewTypeOptions"
                   :key="opt.value"
@@ -656,8 +914,14 @@ onMounted(async () => {
                   :value="opt.value"
                 />
               </el-select>
-              <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
+              <el-button v-if="canTrigger" type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
                 <el-icon><Refresh /></el-icon>触发评审
+              </el-button>
+              <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
+                <el-icon><Clock /></el-icon>稍后评审
+              </el-button>
+              <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
+                <el-icon><Promotion /></el-icon>特批放行
               </el-button>
             </div>
           </div>
@@ -709,21 +973,6 @@ onMounted(async () => {
             </el-descriptions>
           </el-card>
         </div>
-      </el-card>
-
-      <!-- PM 确认释放 -->
-      <el-card class="table-card" shadow="never" v-if="release.status === 'pending_confirm'">
-        <template #header><span>释放确认</span></template>
-        <el-alert
-          type="success"
-          show-icon
-          :closable="false"
-          title="所有评审已通过，等待项目经理确认释放。"
-          style="margin-bottom: 12px"
-        />
-        <el-button type="success" :loading="confirming" @click="handleConfirm">
-          <el-icon><Check /></el-icon>确认释放
-        </el-button>
       </el-card>
 
       <!-- 交付物列表(所有状态可见) -->
@@ -1018,5 +1267,74 @@ onMounted(async () => {
   text-align: center;
   padding: 24px;
   font-size: 13px;
+}
+
+/* ============ 流水线方框样式 ============ */
+.pipeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.step-box {
+  border: 1px solid #e4e7ed;
+  border-left: 4px solid #c0c4cc;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 8px;
+  background: #fff;
+  position: relative;
+}
+.step-box.current { border-left-color: #409eff; background: #f0f7ff; }
+.step-box.in_progress { border-left-color: #e6a23c; background: #fdf6ec; }
+.step-box.completed { border-left-color: #67c23a; }
+.step-box.failed { border-left-color: #f56c6c; background: #fef0f0; }
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 16px;
+  font-weight: bold;
+}
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #c0c4cc;
+  color: #fff;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.step-box.current .step-number { background: #409eff; }
+.step-box.in_progress .step-number { background: #e6a23c; }
+.step-box.completed .step-number { background: #67c23a; }
+.step-box.failed .step-number { background: #f56c6c; }
+.step-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.step-info { font-size: 14px; line-height: 1.8; color: #606266; }
+.step-info .label { color: #909399; margin-right: 6px; }
+.step-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.step-connector {
+  text-align: center;
+  color: #c0c4cc;
+  font-size: 20px;
+  margin: -4px 0;
+  line-height: 1;
+}
+.review-result-box {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: #f5f7fa;
+  font-size: 13px;
+}
+@media (max-width: 768px) {
+  .step-content { grid-template-columns: 1fr; }
 }
 </style>
