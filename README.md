@@ -2,7 +2,7 @@
 
 > English | [简体中文](README_zh-CN.md)
 
-> Version: 1.4.2  Date: 2026-07-21
+> Version: 1.4.3  Date: 2026-07-22
 
 ## About the Name
 
@@ -87,12 +87,16 @@ Read the **[Deployment Guide](docs/DEPLOYMENT.md)** for full deployment steps.
 - **Project Management**: Project → Version → Release, a three-tier hierarchy
 - **Delivery Workflow**: A 7-step release process with 3 automated LLM reviews
 - **Code Package Parsing**: Supports C code, Python, MATLAB `.m` files, Simulink models, `.mat` files, `.pth` weights
-- **Document Parsing**: Supports Word (`.docx`) and Excel (`.xlsx`)
-- **LLM Review**: Multi-model with automatic fallback, outputs scores and recommendations. Supports any OpenAI-compatible API — minimax-M3/M2.7, GLM-5.2, Deepseek-V4-flash, Qwen, Ollama, etc.
-- **Permission Management**: System-level roles (Guest / Developer / Admin / Super Admin) × Project-level roles (Project Manager / Developer / Tester / External Technical Expert)
+- **Document Parsing**: Supports Word (`.docx`), Excel (`.xlsx`), ZIP archives (auto-extract + recursive parse), and plain text (`.md`, `.txt`, `.csv`, `.json`, `.yaml`)
+- **LLM Review**: Multi-model with automatic fallback, outputs scores and recommendations. Supports any OpenAI-compatible API — minimax-M3/M2.7, GLM-5.2, Deepseek-V4-flash, Qwen, Ollama, etc. **Streaming output via SSE** for real-time review progress.
+- **Permission Management**: System-level roles (Guest / Developer / Admin / Super Admin) × Project-level roles (Project Manager / Developer / Tester / External Technical Expert). **Auto-add dev/test/expert as project members on version creation.**
 - **Matrix Organization**: Process-domain dimension (Department → Section → Group) × Project dimension
 - **Audit Logging**: Full operation audit trail
-- **Notifications**: In-app notifications + email reminders
+- **Notifications**: In-app notifications + email reminders. **Auto-triggered at key events**: version assigned, artifact uploaded, review passed/failed, release confirmed.
+- **Role-based Todo Center**: Each user sees their pending releases on the home page, filtered by role and release status.
+- **Status Guidance**: Release detail page shows a "next step" banner indicating who should act and what to do next.
+- **Template Download**: One-click download of code package, test report, and expert review report templates (auto-filled with project/version/user info).
+- **Demo Quick Login**: Login page provides quick-login buttons for 4 demo roles (PM / Developer / Tester / Expert).
 - **Self-service**: Account registration, password recovery
 
 ## Default Admin
