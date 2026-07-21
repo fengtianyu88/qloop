@@ -246,6 +246,32 @@ async def create_version(
         status=ReleaseStatus.DRAFT,
     )
     db.add(release)
+
+    # 自动把 developer/tester/expert 加入 ProjectMember(如果尚未存在)
+    # 这样他们登录后才能访问项目和 release
+    role_assignments = [
+        (version_create.developer_id, ProjectRole.DEVELOPER),
+        (version_create.tester_id,    ProjectRole.TESTER),
+        (version_create.expert_id,    ProjectRole.EXTERNAL_EXPERT),
+    ]
+    for user_id, role in role_assignments:
+        if user_id is None:
+            continue
+        # 跳过 PM 自己(已经在 create_project 时加入)
+        # 但仍要确认:PM 可能被分配为 developer,这种情况不重复插入
+        existing_member = await db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == user_id,
+            )
+        )
+        if existing_member.scalar_one_or_none() is None:
+            db.add(ProjectMember(
+                project_id=project_id,
+                user_id=user_id,
+                project_role=role,
+            ))
+
     await db.commit()
     await db.refresh(version)
     return version
