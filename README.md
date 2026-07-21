@@ -2,7 +2,7 @@
 
 > English | [简体中文](README_zh-CN.md)
 
-> Version: 1.4.0  Date: 2026-07-21
+> Version: 1.4.1  Date: 2026-07-21
 
 ## About the Name
 
@@ -105,6 +105,10 @@ After the first deployment, log in with:
 **Change the password immediately after login!**
 
 ## Changelog
+
+### v1.4.1 (2026-07-21) — Login lockout tuning
+
+- Login failure lockout duration reduced from 15 minutes to 3 minutes (5 failed attempts still triggers lockout)
 
 ### v1.4.0 (2026-07-21) — Stability / Security / New features major release
 
