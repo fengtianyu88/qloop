@@ -10,8 +10,10 @@ import {
   uploadReviewReport,
   confirmRelease,
   downloadArtifact,
+  getExternalDownloadLinks,
 } from '@/api/releases'
 import { getReleaseReviews, triggerReview } from '@/api/reviews'
+import { getProject } from '@/api/projects'
 import { useAuthStore } from '@/stores/auth'
 import request from '@/api/request'
 import {
@@ -21,7 +23,7 @@ import {
   statusLabel,
   statusTagType,
 } from '@/utils/status'
-import type { LLMReview, Release, ReviewType } from '@/types'
+import type { ExternalRecipientLink, LLMReview, Release, ReviewType } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -29,8 +31,12 @@ const authStore = useAuthStore()
 
 const releaseId = computed(() => route.params.id as string)
 const release = ref<Release | null>(null)
+// P2-9: 面包屑用,展示所属项目名称(按需懒加载)
+const projectName = ref<string>('')
 const reviews = ref<LLMReview[]>([])
 const loading = ref(false)
+// 功能2.4: 外部接收方下载链接(含 access_token)
+const externalLinks = ref<ExternalRecipientLink[]>([])
 
 // 流程步骤
 const steps = [
@@ -66,6 +72,8 @@ const reviewDrawerVisible = ref(false)
 const reviewDrawerCollapsed = ref(false)  // 收缩状态
 const reviewProgressLogs = ref<{time: string, msg: string, type: 'info'|'success'|'warning'|'error'}[]>([])
 let reviewPollingTimer: ReturnType<typeof setInterval> | null = null
+// 功能4: SSE EventSource 连接(实时接收评审进度,与轮询互补)
+let reviewEventSource: EventSource | null = null
 
 // 评审当前状态(用于顶部醒目展示)
 const reviewCurrentStatus = ref<'idle' | 'triggering' | 'running' | 'passed' | 'failed' | 'error'>('idle')
@@ -88,6 +96,29 @@ function addProgressLog(msg: string, type: 'info'|'success'|'warning'|'error' = 
     const el = document.querySelector('.review-log-list')
     if (el) el.scrollTop = el.scrollHeight
   })
+}
+
+// 清空评审日志
+function clearReviewLogs() {
+  reviewProgressLogs.value = []
+}
+
+// 导出评审日志为 .txt 文件
+function exportReviewLogs() {
+  if (reviewProgressLogs.value.length === 0) {
+    ElMessage.warning('暂无日志可导出')
+    return
+  }
+  const text = reviewProgressLogs.value
+    .map(log => `[${log.time}] ${log.type.toUpperCase()}: ${log.msg}`)
+    .join('\n')
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `review-logs-${releaseId.value}-${Date.now()}.txt`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 // 格式化耗时 mm:ss
@@ -189,6 +220,78 @@ function stopReviewPolling() {
     clearInterval(reviewHeartbeatTimer)
     reviewHeartbeatTimer = null
   }
+  // 功能4: 同时关闭 SSE 连接
+  stopSSEStream()
+}
+
+// 功能4: 启动 SSE 流式接收评审进度
+function startSSEStream() {
+  stopSSEStream()
+  const token = localStorage.getItem('token')
+  if (!token) return
+  // EventSource 不支持自定义 header,通过 query 参数传 token
+  const url = `/api/reviews/stream/${releaseId.value}?token=${encodeURIComponent(token)}`
+  try {
+    reviewEventSource = new EventSource(url)
+  } catch (e) {
+    // 浏览器不支持或 URL 无效,静默降级到轮询
+    reviewEventSource = null
+    return
+  }
+
+  reviewEventSource.onmessage = (event) => {
+    let data: any
+    try {
+      data = JSON.parse(event.data)
+    } catch {
+      return  // 忽略无法解析的消息(如心跳注释不会触发 onmessage)
+    }
+    if (data.error) {
+      addProgressLog(`SSE 错误:${data.error}`, 'error')
+      stopSSEStream()
+      return
+    }
+    const label = reviewTypeLabel(data.review_type as ReviewType) || data.review_type
+    const stepKey = `${data.review_type}|${data.review_round}|${data.result}`
+    if (data.result === 'pending') {
+      reviewCurrentStatus.value = 'running'
+      reviewCurrentStep.value = `${label} · 第 ${data.review_round} 轮`
+      if (stepKey !== lastLoggedStepKey) {
+        lastLoggedStepKey = stepKey
+        addProgressLog(`[${reviewCurrentStep.value}] SSE:LLM 正在分析...`, 'info')
+      }
+    } else if (data.result === 'passed') {
+      reviewCurrentStatus.value = 'passed'
+      reviewCurrentStep.value = `${label} · 已通过`
+      addProgressLog(`SSE:评审通过!总分:${data.total_score ?? '—'}`, 'success')
+      if (data.conclusion) addProgressLog(`结论:${data.conclusion}`, 'info')
+      stopSSEStream()
+    } else if (data.result === 'failed') {
+      reviewCurrentStatus.value = 'failed'
+      reviewCurrentStep.value = `${label} · 未通过`
+      addProgressLog(`SSE:评审未通过,总分:${data.total_score ?? '—'}`, 'warning')
+      if (data.suggestions) addProgressLog(`建议:${data.suggestions}`, 'info')
+      stopSSEStream()
+    } else if (data.result === 'error') {
+      reviewCurrentStatus.value = 'error'
+      reviewCurrentStep.value = `${label} · 出错`
+      addProgressLog(`SSE:评审出错,请查看评审记录`, 'error')
+      stopSSEStream()
+    }
+  }
+
+  reviewEventSource.onerror = () => {
+    // SSE 连接异常(可能是终态关闭或网络中断),静默关闭,轮询会继续兜底
+    stopSSEStream()
+  }
+}
+
+// 功能4: 关闭 SSE 流
+function stopSSEStream() {
+  if (reviewEventSource) {
+    reviewEventSource.close()
+    reviewEventSource = null
+  }
 }
 
 // 组件卸载时清理所有 timer,避免内存泄漏
@@ -233,12 +336,15 @@ function syncTriggerType() {
 const codeFile = ref<File | null>(null)
 const codeChangeNotes = ref('')
 const codeUploading = ref(false)
+const codeUploadProgress = ref(0)  // 代码包上传进度(0-100)
 
 const testFile = ref<File | null>(null)
 const testUploading = ref(false)
+const testUploadProgress = ref(0)  // 测试报告上传进度(0-100)
 
 const reviewFile = ref<File | null>(null)
 const reviewUploading = ref(false)
+const reviewUploadProgress = ref(0)  // 评审报告上传进度(0-100)
 
 function handleCodeFileChange(file: UploadFile) {
   codeFile.value = file.raw || null
@@ -256,8 +362,20 @@ async function doUploadCode() {
     return
   }
   codeUploading.value = true
+  codeUploadProgress.value = 0
   try {
-    release.value = await uploadCodePackage(releaseId.value, codeFile.value, codeChangeNotes.value || undefined)
+    // 直接使用 request.post 以支持 onUploadProgress 回调
+    const formData = new FormData()
+    formData.append('file', codeFile.value)
+    if (codeChangeNotes.value) formData.append('change_notes', codeChangeNotes.value)
+    release.value = await request.post(`/releases/${releaseId.value}/code-package`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total) {
+          codeUploadProgress.value = Math.round((progressEvent.loaded / progressEvent.total) * 100)
+        }
+      }
+    })
     ElMessage.success('代码包上传成功，已进入代码评审')
     codeFile.value = null
     codeChangeNotes.value = ''
@@ -276,8 +394,19 @@ async function doUploadTest() {
     return
   }
   testUploading.value = true
+  testUploadProgress.value = 0
   try {
-    release.value = await uploadTestReport(releaseId.value, testFile.value)
+    // 直接使用 request.post 以支持 onUploadProgress 回调
+    const formData = new FormData()
+    formData.append('file', testFile.value)
+    release.value = await request.post(`/releases/${releaseId.value}/test-report`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total) {
+          testUploadProgress.value = Math.round((progressEvent.loaded / progressEvent.total) * 100)
+        }
+      }
+    })
     ElMessage.success('测试报告上传成功，已进入测试报告评审')
     testFile.value = null
     await loadReviews()
@@ -295,8 +424,19 @@ async function doUploadReviewReport() {
     return
   }
   reviewUploading.value = true
+  reviewUploadProgress.value = 0
   try {
-    release.value = await uploadReviewReport(releaseId.value, reviewFile.value)
+    // 直接使用 request.post 以支持 onUploadProgress 回调
+    const formData = new FormData()
+    formData.append('file', reviewFile.value)
+    release.value = await request.post(`/releases/${releaseId.value}/review-report`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total) {
+          reviewUploadProgress.value = Math.round((progressEvent.loaded / progressEvent.total) * 100)
+        }
+      }
+    })
     ElMessage.success('评审报告上传成功，已进入专家报告评审')
     reviewFile.value = null
     await loadReviews()
@@ -440,6 +580,7 @@ interface ArtifactItem {
   uploaderId: string | null
   uploadedAt: string | null
   icon: string  // 用于显示的图标名(可选)
+  sha256: string | null  // 完整性校验摘要(功能3)
 }
 
 const artifacts = computed<ArtifactItem[]>(() => {
@@ -456,6 +597,7 @@ const artifacts = computed<ArtifactItem[]>(() => {
       uploaderId: r.code_package_uploaded_by,
       uploadedAt: r.code_package_uploaded_at,
       icon: 'Files',
+      sha256: r.code_package_sha256,
     })
   }
   if (r.test_report_path) {
@@ -468,6 +610,7 @@ const artifacts = computed<ArtifactItem[]>(() => {
       uploaderId: r.test_report_uploaded_by,
       uploadedAt: r.test_report_uploaded_at,
       icon: 'Document',
+      sha256: r.test_report_sha256,
     })
   }
   if (r.review_report_path) {
@@ -480,6 +623,7 @@ const artifacts = computed<ArtifactItem[]>(() => {
       uploaderId: r.review_report_uploaded_by,
       uploadedAt: r.review_report_uploaded_at,
       icon: 'Notebook',
+      sha256: r.review_report_sha256,
     })
   }
   return items
@@ -490,11 +634,56 @@ function dimensionEntries(scores: Record<string, number> | null): [string, numbe
   return Object.entries(scores)
 }
 
+async function loadExternalLinks() {
+  // 功能2.4: 加载外部接收方下载链接(仅已释放时调用)
+  try {
+    externalLinks.value = await getExternalDownloadLinks(releaseId.value)
+  } catch {
+    externalLinks.value = []
+  }
+}
+
+// 功能3.4: 复制 SHA256 到剪贴板
+async function copySha256(sha256: string | null) {
+  if (!sha256) return
+  try {
+    await navigator.clipboard.writeText(sha256)
+    ElMessage.success('SHA256 已复制到剪贴板')
+  } catch {
+    ElMessage.warning('复制失败,请手动选择文本复制')
+  }
+}
+
+// 功能2.4: 复制外部下载链接到剪贴板
+async function copyDownloadLink(link: string | null) {
+  if (!link) return
+  try {
+    await navigator.clipboard.writeText(link)
+    ElMessage.success('下载链接已复制')
+  } catch {
+    ElMessage.warning('复制失败,请手动复制')
+  }
+}
+
 async function loadRelease() {
   loading.value = true
   try {
     release.value = await getRelease(releaseId.value)
     syncTriggerType()
+    // P2-9: 加载所属项目名称,用于面包屑展示
+    if (release.value?.project_id) {
+      try {
+        const project = await getProject(release.value.project_id)
+        projectName.value = project?.name || ''
+      } catch {
+        // 项目名称加载失败不阻塞主流程
+        projectName.value = ''
+      }
+    }
+    // 已释放时加载外部接收方下载链接(功能2.4)
+    if (release.value?.status === 'released') {
+      await loadExternalLinks()
+    }
   } catch {
     // 错误已统一提示
   } finally {
@@ -688,9 +877,11 @@ async function handleSkipReview() {
   if (!release.value) return
   try {
     await ElMessageBox.confirm(
-      '确定要跳过当前评审,直接进入下一阶段吗?',
-      '稍后评审确认',
-      { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' },
+      '将跳过当前 LLM 评审,直接进入下一阶段。\n\n' +
+      '当前评审类型:' + reviewTypeLabel(triggerReviewType.value) + '\n' +
+      '跳过后仍可在后续阶段重新触发评审。',
+      '稍后 LLM 评审',
+      { type: 'warning', confirmButtonText: '确认跳过', cancelButtonText: '取消' },
     )
   } catch {
     return
@@ -710,11 +901,13 @@ async function handleForceAdvance() {
   if (!release.value) return
   try {
     await ElMessageBox.confirm(
-      '确定要特批放行吗?此操作将跳过剩余评审直接推进流程。',
-      '特批放行确认',
+      '将跳过剩余所有 LLM 评审,直接释放版本。\n\n' +
+      '此操作需要 PM 或管理员权限,且会记录在审计日志中。\n' +
+      '释放后版本不可撤销。',
+      '特批放行',
       {
         type: 'warning',
-        confirmButtonText: '确定放行',
+        confirmButtonText: '确认放行',
         cancelButtonText: '取消',
         confirmButtonClass: 'el-button--danger',
       },
@@ -813,11 +1006,33 @@ onMounted(async () => {
   await loadReviews()
   // 加载完 reviews 后再次同步 trigger 类型(用于 review_failed 状态下推断失败类型)
   syncTriggerType()
+  // 检测是否有进行中的评审,自动恢复抽屉和轮询(切换路由回来时也能继续查看实时日志)
+  if (reviewInProgress.value) {
+    openReviewDrawer()
+    reviewCurrentStatus.value = 'running'
+    const latest = reviews.value[0]
+    const label = reviewTypeLabel(latest.review_type as ReviewType) || latest.review_type
+    reviewCurrentStep.value = `${label} · 第 ${latest.review_round} 轮`
+    startReviewPolling()
+  }
 })
 </script>
 
 <template>
   <div class="page-container" v-loading="loading">
+    <!-- P2-9: 面包屑导航,方便用户回到项目/首页 -->
+    <el-breadcrumb separator="/" class="release-breadcrumb">
+      <el-breadcrumb-item :to="{ path: '/home' }">首页</el-breadcrumb-item>
+      <el-breadcrumb-item :to="{ path: '/projects' }">项目</el-breadcrumb-item>
+      <el-breadcrumb-item
+        v-if="release?.project_id"
+        :to="{ path: '/projects/' + release.project_id }"
+      >
+        {{ projectName || '项目详情' }}
+      </el-breadcrumb-item>
+      <el-breadcrumb-item>版本 {{ release?.release_number }}</el-breadcrumb-item>
+    </el-breadcrumb>
+
     <div class="detail-header">
       <el-button @click="goBack"><el-icon><ArrowLeft /></el-icon>返回</el-button>
       <h2 class="page-title">释放详情</h2>
@@ -840,12 +1055,20 @@ onMounted(async () => {
         <el-alert
           v-if="isFailed"
           type="error"
-          show-icon
           :closable="false"
-          title="评审未通过"
-          description="本次释放在评审环节未通过，请根据评审建议修改后重新上传。"
+          show-icon
           style="margin-bottom: 16px"
-        />
+        >
+          <template #title>评审未通过</template>
+          <template #default>
+            <div>评审未通过，请根据评审建议修改后重新上传。</div>
+          </template>
+          <template #action>
+            <el-button type="primary" size="small" @click="handleTriggerReview">
+              重新触发评审
+            </el-button>
+          </template>
+        </el-alert>
 
         <div class="pipeline">
           <!-- 步骤 1:版本创建 -->
@@ -930,6 +1153,14 @@ onMounted(async () => {
                   <el-button type="primary" size="small" :loading="codeUploading" @click="doUploadCode">
                     {{ canReuploadAtStep('code_review') ? '重新上传代码包' : '上传代码包' }}
                   </el-button>
+                  <!-- 代码包上传进度条 -->
+                  <el-progress
+                    v-if="codeUploadProgress > 0 && codeUploadProgress < 100"
+                    :percentage="codeUploadProgress"
+                    :stroke-width="6"
+                    status="success"
+                    style="margin-top: 8px; width: 100%"
+                  />
                 </template>
                 <template v-if="release.status === 'code_pending_review'">
                   <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
@@ -1006,6 +1237,14 @@ onMounted(async () => {
                   <el-button type="primary" size="small" :loading="testUploading" @click="doUploadTest">
                     {{ canReuploadAtStep('test_report_review') ? '重新上传测试报告' : '上传测试报告' }}
                   </el-button>
+                  <!-- 测试报告上传进度条 -->
+                  <el-progress
+                    v-if="testUploadProgress > 0 && testUploadProgress < 100"
+                    :percentage="testUploadProgress"
+                    :stroke-width="6"
+                    status="success"
+                    style="margin-top: 8px; width: 100%"
+                  />
                 </template>
                 <template v-if="release.status === 'test_pending_review'">
                   <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
@@ -1082,6 +1321,14 @@ onMounted(async () => {
                   <el-button type="primary" size="small" :loading="reviewUploading" @click="doUploadReviewReport">
                     {{ canReuploadAtStep('expert_report_review') ? '重新上传评审报告' : '上传评审报告' }}
                   </el-button>
+                  <!-- 评审报告上传进度条 -->
+                  <el-progress
+                    v-if="reviewUploadProgress > 0 && reviewUploadProgress < 100"
+                    :percentage="reviewUploadProgress"
+                    :stroke-width="6"
+                    status="success"
+                    style="margin-top: 8px; width: 100%"
+                  />
                 </template>
                 <template v-if="release.status === 'expert_pending_review'">
                   <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
@@ -1170,15 +1417,49 @@ onMounted(async () => {
               <el-button v-if="canTrigger" type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
                 <el-icon><Refresh /></el-icon>触发评审
               </el-button>
-              <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
-                <el-icon><Clock /></el-icon>稍后评审
-              </el-button>
-              <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
-                <el-icon><Promotion /></el-icon>特批放行
-              </el-button>
+              <el-tooltip content="跳过当前 LLM 评审,直接进入下一阶段(开发/测试人员可用)" placement="top">
+                <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
+                  <el-icon><Clock /></el-icon>稍后 LLM 评审
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="跳过剩余所有评审,直接释放版本(仅 PM/管理员可用)" placement="top">
+                <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
+                  <el-icon><Promotion /></el-icon>特批放行
+                </el-button>
+              </el-tooltip>
             </div>
           </div>
         </template>
+
+        <!-- 功能2: 评审历史时间线(多轮对比) -->
+        <el-timeline v-if="reviews.length > 0" class="review-timeline">
+          <el-timeline-item
+            v-for="review in reviews"
+            :key="review.id"
+            :timestamp="formatTime(review.created_at)"
+            :type="review.result === 'passed' ? 'success' : review.result === 'failed' ? 'danger' : review.result === 'pending' ? 'primary' : 'info'"
+            placement="top"
+          >
+            <el-card shadow="hover" class="timeline-card">
+              <h4 class="timeline-title">{{ reviewTypeLabel(review.review_type) }} · 第 {{ review.review_round }} 轮</h4>
+              <p class="timeline-line"><span class="timeline-label">结果:</span>
+                <el-tag size="small" :type="reviewResultTagType(review.result)">{{ reviewResultLabel(review.result) }}</el-tag>
+              </p>
+              <p v-if="review.total_score !== null" class="timeline-line">
+                <span class="timeline-label">总分:</span>{{ review.total_score }}
+              </p>
+              <p v-if="review.model_used" class="timeline-line">
+                <span class="timeline-label">模型:</span>{{ review.model_used }}
+              </p>
+              <p v-if="review.conclusion" class="timeline-line">
+                <span class="timeline-label">结论:</span>{{ review.conclusion }}
+              </p>
+              <p v-if="review.suggestions" class="timeline-line">
+                <span class="timeline-label">建议:</span>{{ review.suggestions }}
+              </p>
+            </el-card>
+          </el-timeline-item>
+        </el-timeline>
 
         <el-empty v-if="reviews.length === 0" description="暂无评审记录" />
 
@@ -1275,6 +1556,20 @@ onMounted(async () => {
           <el-table-column label="上传时间" width="170">
             <template #default="{ row }">{{ formatTime(row.uploadedAt) }}</template>
           </el-table-column>
+          <el-table-column label="SHA256" width="200">
+            <template #default="{ row }">
+              <el-tooltip
+                v-if="row.sha256"
+                :content="row.sha256"
+                placement="top"
+              >
+                <span class="sha256-value" @click="copySha256(row.sha256)">
+                  SHA256: {{ row.sha256.substring(0, 16) }}...
+                </span>
+              </el-tooltip>
+              <span v-else style="color:#909399">—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
               <el-button
@@ -1307,6 +1602,52 @@ onMounted(async () => {
               预签名链接有效期至：{{ formatTime(release.link_expiry) }}
             </span>
           </div>
+        </div>
+
+        <!-- 功能2.4: 外部接收方下载链接(含 access_token) -->
+        <div
+          v-if="isReleased && externalLinks.length > 0"
+          style="margin-top:12px;padding-top:12px;border-top:1px dashed #e4e7ed"
+        >
+          <div style="font-weight:600;margin-bottom:8px">外部接收方下载链接</div>
+          <el-table :data="externalLinks" border stripe size="small">
+            <el-table-column label="接收方" min-width="180">
+              <template #default="{ row }">
+                <div>{{ row.name || row.email }}</div>
+                <div style="color:#909399;font-size:12px">{{ row.email }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="Access Token" min-width="200">
+              <template #default="{ row }">
+                <span v-if="row.access_token" class="mono-id">
+                  {{ row.access_token.substring(0, 16) }}…
+                </span>
+                <span v-else style="color:#909399">未生成</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="下载次数" width="120">
+              <template #default="{ row }">
+                {{ row.download_count }} / {{ row.max_downloads }}
+              </template>
+            </el-table-column>
+            <el-table-column label="过期时间" width="170">
+              <template #default="{ row }">
+                {{ row.token_expires_at ? formatTime(row.token_expires_at) : '—' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  v-if="row.download_link"
+                  type="primary"
+                  link
+                  @click="copyDownloadLink(row.download_link)"
+                >
+                  复制链接
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
         </div>
 
         <!-- 空状态 -->
@@ -1398,7 +1739,13 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="review-log-header">实时日志</div>
+          <div class="review-log-header">
+            <span>实时日志</span>
+            <div class="review-log-actions">
+              <el-button size="small" link @click="clearReviewLogs">清空</el-button>
+              <el-button size="small" link @click="exportReviewLogs">导出 .txt</el-button>
+            </div>
+          </div>
           <div class="review-log-list">
             <div
               v-for="(log, i) in reviewProgressLogs"
@@ -1424,6 +1771,11 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.release-breadcrumb {
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
 .detail-header {
   display: flex;
   align-items: center;
@@ -1467,6 +1819,15 @@ onMounted(async () => {
   font-size: 12px;
   color: #909399;
   word-break: break-all;
+}
+.sha256-value {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: var(--el-color-primary);
+  cursor: pointer;
+}
+.sha256-value:hover {
+  text-decoration: underline;
 }
 
 .upload-tip {
@@ -1696,6 +2057,13 @@ onMounted(async () => {
   color: #909399;
   font-weight: 500;
   background: #fafafa;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.review-log-actions {
+  display: flex;
+  gap: 8px;
 }
 .review-log-list {
   flex: 1;
@@ -1829,4 +2197,28 @@ onMounted(async () => {
 @media (max-width: 768px) {
   .step-content { grid-template-columns: 1fr; }
 }
+
+/* 功能2: 评审历史时间线样式 */
+.review-timeline {
+  margin-bottom: 24px;
+}
+.timeline-card {
+  margin: 0;
+}
+.timeline-title {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.timeline-line {
+  margin: 4px 0;
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.6;
+}
+.timeline-label {
+  color: #909399;
+  margin-right: 4px;
+}
+
 </style>

@@ -2,7 +2,7 @@
 
 > English | [简体中文](README_zh-CN.md)
 
-> Version: 1.3.1  Date: 2026-07-20
+> Version: 1.4.0  Date: 2026-07-21
 
 ## About the Name
 
@@ -105,6 +105,66 @@ After the first deployment, log in with:
 **Change the password immediately after login!**
 
 ## Changelog
+
+### v1.4.0 (2026-07-21) — Stability / Security / New features major release
+
+**P0 Security & Concurrency (7 items)**:
+- Concurrent review lock (SELECT FOR UPDATE)
+- Upload file size limit (200MB)
+- Login failure lockout (5 attempts / 15 minutes)
+- SECRET_KEY mandatory validation in production
+- LLM API Key masked in responses
+- confirm/delete_artifact concurrent locks
+- Celery task auto-retry (network exceptions)
+
+**P0 New Features (3 items)**:
+- Email notification system (superadmin toggle, SMTP config, 4 notification templates)
+- External recipient download access control (token + count limit)
+- Release package SHA256 integrity verification
+
+**P1 Stability Backend (7 items)**:
+- LLM call exponential backoff retry
+- File type whitelist validation + filename sanitize
+- Database connection pool config (20+20)
+- Password strength validation (8+ chars + letters + digits)
+- Refresh Token mechanism (7 days)
+- Home todo/done pagination
+- Version soft delete (archive)
+
+**P1 Interaction Frontend (8 items)**:
+- Review drawer auto-restore (switching pages without interruption)
+- Upload progress bar
+- Review failure alert quick button
+- Button tooltip clarification
+- Review log clear/export
+- LlmConfig prompt placeholder explanation + dimension threshold restore default
+- Error message friendliness
+- Role switch secondary confirmation
+
+**P1 New Features (5 items)**:
+- Project view homepage (overview cards)
+- Review history timeline (el-timeline)
+- Process domain tree management UI
+- LLM review SSE streaming output
+- SSE real-time notification push
+
+**P2 Experience Details (14 items)**:
+- LLM timeout distinction (connection/read)
+- max_tokens configurable
+- Celery soft timeout protection + PENDING to ERROR
+- Token blacklist (Redis)
+- CSP security headers
+- Refresh page user info recovery
+- Logout clear localStorage
+- Remember me feature
+- Breadcrumb navigation
+- Log level config
+- CORS environment variable
+- DEBUG mode production validation
+- Transaction isolation level documentation
+- Long transaction statement_timeout (60s)
+
+Total: 39 items, involving 40+ files.
 
 ### v1.3.1 (2026-07-20) — LLM review drawer interaction fix + progress display enhancement
 

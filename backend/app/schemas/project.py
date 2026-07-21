@@ -95,6 +95,25 @@ class ExternalRecipientCreate(BaseModel):
     name: Optional[str] = None
     link_expiry_hours: int = 168
     access_scope: str = "download_only"
+    max_downloads: int = 10
+
+
+class ExternalRecipientResponse(BaseModel):
+    """外部接收方响应(含 access_token,功能2)。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    version_id: uuid.UUID
+    email: str
+    name: Optional[str] = None
+    link_expiry_hours: int
+    access_scope: str
+    access_token: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
+    download_count: int = 0
+    max_downloads: int = 10
+    max_downloads: int = 10
 
 
 class ReleaseResponse(BaseModel):
@@ -110,6 +129,10 @@ class ReleaseResponse(BaseModel):
     code_package_path: Optional[str] = None
     test_report_path: Optional[str] = None
     review_report_path: Optional[str] = None
+    # 释放包完整性校验:SHA256(功能3)
+    code_package_sha256: Optional[str] = None
+    test_report_sha256: Optional[str] = None
+    review_report_sha256: Optional[str] = None
     # Uploader info for each artifact (SOX audit traceability).
     code_package_uploaded_by: Optional[uuid.UUID] = None
     code_package_uploaded_at: Optional[datetime] = None

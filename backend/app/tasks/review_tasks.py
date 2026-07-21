@@ -21,6 +21,8 @@ import asyncio
 import logging
 import uuid
 
+from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -30,7 +32,7 @@ from sqlalchemy.pool import NullPool
 
 from app.config import settings
 from app.llm.reviewer import execute_review
-from app.models.review import ReviewType
+from app.models.review import LLMReview, ReviewResult, ReviewType
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -69,8 +71,37 @@ def _make_session_factory() -> "async_sessionmaker[AsyncSession]":
     )
 
 
-@celery_app.task(name="run_llm_review")
+async def _mark_pending_reviews_as_error(release_id: uuid.UUID, reason: str) -> None:
+    """P2-3: 把指定 release 的 PENDING 评审改为 ERROR,避免任务超时后悬挂。
+
+    在 Celery 软超时或异常路径中调用,保证界面不会停留在"评审中"状态。
+    """
+    session_factory = _make_session_factory()
+    async with session_factory() as db:
+        result = await db.execute(
+            select(LLMReview).where(
+                LLMReview.release_id == release_id,
+                LLMReview.result == ReviewResult.PENDING,
+            )
+        )
+        review = result.scalar_one_or_none()
+        if review is not None:
+            review.result = ReviewResult.ERROR
+            review.conclusion = reason
+            await db.commit()
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    name="run_llm_review",
+)
 def run_llm_review(
+    self,
     release_id: str,
     review_type: str,
     triggered_by: str,
@@ -119,8 +150,31 @@ def run_llm_review(
 
     try:
         return _run_async(_run())
+    except SoftTimeLimitExceeded:
+        # P2-3: Celery 软超时(默认 540s),把 PENDING 评审改为 ERROR 并记录
+        logger.error("LLM 评审任务软超时 release_id=%s", release_id)
+        try:
+            _run_async(_mark_pending_reviews_as_error(release_uuid, "评审任务超时"))
+        except Exception as mark_err:  # noqa: BLE001
+            logger.warning("标记 PENDING 为 ERROR 失败: %s", mark_err)
+        return {
+            "review_id": None,
+            "result": "error",
+            "total_score": 0.0,
+            "error": "评审任务超时(SoftTimeLimitExceeded)",
+        }
+    except (ConnectionError, TimeoutError, OSError) as exc:
+        # 连接类异常自动重试(最多 3 次,间隔 60 秒)
+        logger.warning("run_llm_review 连接异常,将重试: %s", exc)
+        raise self.retry(exc=exc, countdown=60)
     except Exception as exc:  # noqa: BLE001
+        # LLM 评审本身失败不重试,仅记录错误
         logger.exception("run_llm_review failed: %s", exc)
+        # P2-3: 同步把可能残留的 PENDING 评审改为 ERROR
+        try:
+            _run_async(_mark_pending_reviews_as_error(release_uuid, str(exc)))
+        except Exception as mark_err:  # noqa: BLE001
+            logger.warning("标记 PENDING 为 ERROR 失败: %s", mark_err)
         return {
             "review_id": None,
             "result": "error",

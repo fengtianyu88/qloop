@@ -54,6 +54,9 @@ async def search_releases(
     elif status is not None:
         conditions.append(Release.status == status)
 
+    # 排除软删除版本(P1-11):已归档的版本及其 releases 不出现在搜索结果中
+    conditions.append(Version.is_deleted == False)  # noqa: E712
+
     if developer_name:
         conditions.append(
             DeveloperUser.full_name.ilike(f"%{developer_name}%")
@@ -271,6 +274,8 @@ async def export_all(
         .outerjoin(DeveloperUser, Version.developer_id == DeveloperUser.id)
         .outerjoin(TesterUser, Version.tester_id == TesterUser.id)
         .outerjoin(ExpertUser, Version.expert_id == ExpertUser.id)
+        # 排除软删除版本(P1-11)
+        .where(Version.is_deleted == False)  # noqa: E712
     )
     if current_user.system_role == SystemRole.GUEST:
         rel_query = rel_query.where(Release.status == ReleaseStatus.RELEASED)

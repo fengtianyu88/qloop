@@ -71,6 +71,40 @@ def send_notification(
                 content=content,
                 link_url=link_url,
             )
+            # 创建站内通知后,异步发送邮件(失败不影响主流程)
+            try:
+                from sqlalchemy import select as _select
+                from app.models.user import User as _User
+                from app.services.email_service import notify_user as _notify_user
+
+                user_result = await db.execute(
+                    _select(_User).where(_User.id == user_uuid)
+                )
+                user_obj = user_result.scalar_one_or_none()
+                if user_obj and getattr(user_obj, "email", None):
+                    # 把 NotificationType 映射到邮件模板键
+                    _type_to_template = {
+                        "task_assigned": "task_assigned",
+                        "review_passed": "review_completed",
+                        "release_completed": "release_confirmed",
+                    }
+                    template_key = _type_to_template.get(notif_type.value)
+                    if template_key:
+                        # 构造模板上下文(用通知标题/内容作为兜底字段)
+                        ctx = {
+                            "release_number": title,
+                            "review_type": notif_type.value,
+                            "triggered_by": "",
+                            "result": notif_type.value,
+                            "total_score": "",
+                            "confirmed_by": "",
+                            "stage": notif_type.value,
+                        }
+                        await _notify_user(user_obj.email, template_key, ctx)
+            except Exception as mail_exc:
+                logger.warning(
+                    "发送邮件通知失败(不影响站内通知): %s", mail_exc
+                )
             return {
                 "notification_id": str(notification.id),
                 "status": "ok",

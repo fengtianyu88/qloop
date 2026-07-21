@@ -21,6 +21,7 @@ from app.services.audit_service import create_audit_log
 from app.services.org_service import (
     create_org_unit,
     delete_admin_scope,
+    delete_org_unit,
     get_admin_scopes,
     get_admin_scopes_for_org,
     get_org_tree,
@@ -108,6 +109,39 @@ async def update_org_unit_endpoint(
 
     return OrgUnitResponse.model_validate(org_unit)
 
+
+@router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_org_unit_endpoint(
+    org_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(SystemRole.SUPER_ADMIN)),
+):
+    """删除组织单元(SUPER_ADMIN only)。
+
+    拒绝条件:存在子节点 / 存在关联用户。
+    """
+    try:
+        deleted = await delete_org_unit(db=db, org_id=org_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization unit not found",
+        )
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="delete_org_unit",
+        resource_type="org_unit",
+        resource_id=str(org_id),
+        details={},
+    )
+    return None
 
 @router.post(
     "/admin-scopes",

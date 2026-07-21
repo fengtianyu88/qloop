@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.requests import Request
 
 from app.api.imports import router as imports_router
 from app.api.my_tasks import router as my_tasks_router
@@ -21,6 +22,12 @@ from app.api.system_settings import router as system_settings_router
 from app.api.users import router as users_router
 from app.config import settings
 from app.services.init_service import ensure_default_review_rules
+
+# P2-10: 启动时配置日志级别(可通过 LOG_LEVEL 环境变量调整)
+logging.basicConfig(level=settings.LOG_LEVEL)
+if settings.LOG_LEVEL == "DEBUG":
+    # DEBUG 模式下开启 SQLAlchemy 引擎日志,便于排查 SQL 问题
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +56,48 @@ def create_app() -> FastAPI:
             f"{settings.APP_NAME} 后端 API — 质量闭环 · 测试驱动开发。"
             f"覆盖项目管理、版本释放流程、LLM 评审与审计日志等能力。"
         ),
-        version="1.3.1",
+        version="1.4.0",
         lifespan=lifespan,
     )
 
-    # CORS configuration
+    # P2-11: CORS 允许源改为从环境变量读取(逗号分隔)
+    cors_origins = [
+        origin.strip()
+        for origin in settings.CORS_ORIGINS.split(",")
+        if origin.strip()
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://localhost"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # P2-5: 安全响应头中间件(CSP / X-Frame-Options 等)
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        """为所有响应附加安全相关 HTTP 头部。
+
+        - CSP 允许内联脚本/样式(Vue 运行需要 unsafe-eval)
+        - X-Frame-Options DENY 防止被嵌套点击劫持
+        - X-Content-Type-Options nosniff 阻止 MIME 嗅探
+        """
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # CSP 策略:允许内联脚本和样式,因为 Vue 运行时需要
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' data:; "
+            "connect-src 'self' ws: wss:;"
+        )
+        return response
 
     # Register all API routers
     app.include_router(imports_router)
@@ -84,7 +121,7 @@ def create_app() -> FastAPI:
         return {
             "status": "healthy",
             "app": settings.APP_NAME,
-            "version": "1.3.1",
+            "version": "1.4.0",
         }
 
     return app

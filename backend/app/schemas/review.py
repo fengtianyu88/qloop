@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.review import LLMProtocol, ReviewResult, ReviewType
 
@@ -30,11 +30,22 @@ class LLMModelResponse(BaseModel):
     name: str
     protocol: LLMProtocol
     api_base: str
-    api_key: str
+    # 不序列化到响应中,仅用于内部计算脱敏值
+    api_key: str = Field(exclude=True, repr=False)
+    # 脱敏后的 key(如 sk-1****abcd)
+    api_key_masked: Optional[str] = None
     model_name: str
     is_active: bool
     priority: int
     created_at: datetime
+
+    @model_validator(mode="after")
+    def set_masked_key(self):
+        """根据 api_key 计算脱敏后的展示值。"""
+        if self.api_key:
+            k = self.api_key
+            self.api_key_masked = k[:4] + "****" + k[-4:] if len(k) > 8 else "****"
+        return self
 
 
 class ReviewRuleCreate(BaseModel):

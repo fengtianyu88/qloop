@@ -126,6 +126,45 @@ async def get_org_unit_by_id(
     return result.scalar_one_or_none()
 
 
+async def delete_org_unit(db: AsyncSession, org_id: uuid.UUID) -> bool:
+    """删除组织单元。
+
+    安全策略:
+    - 存在子节点时拒绝(避免级联删除误伤);
+    - 存在关联用户时拒绝(需先迁移用户);
+    - admin_scopes 通过 ORM cascade 自动清理。
+
+    Returns:
+        True 表示删除成功;False 表示未找到。
+    """
+    from sqlalchemy import select as _select
+    from app.models.organization import OrgUnit, AdminScope
+    from app.models.user import User
+
+    org_unit = await get_org_unit_by_id(db, org_id)
+    if org_unit is None:
+        return False
+
+    # 检查子节点
+    child_result = await db.execute(
+        _select(OrgUnit).where(OrgUnit.parent_id == org_id).limit(1)
+    )
+    if child_result.scalar_one_or_none() is not None:
+        raise ValueError("该组织单元存在子节点,请先删除子节点")
+
+    # 检查关联用户
+    user_result = await db.execute(
+        _select(User).where(User.org_unit_id == org_id).limit(1)
+    )
+    if user_result.scalar_one_or_none() is not None:
+        raise ValueError("该组织单元下存在用户,请先迁移用户到其他组织单元")
+
+    await db.delete(org_unit)
+    await db.commit()
+    return True
+
+
+
 async def update_org_unit(
     db: AsyncSession, org_id: uuid.UUID, org_update: OrgUnitUpdate
 ) -> Optional[OrgUnit]:

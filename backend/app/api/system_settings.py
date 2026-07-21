@@ -48,6 +48,7 @@ async def update_settings(
         db=db,
         site_name=payload.site_name,
         site_short_name=payload.site_short_name,
+        email_notification_enabled=payload.email_notification_enabled,
         updated_by=current_user.id,
     )
 

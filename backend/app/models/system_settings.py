@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import Boolean, DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,6 +33,11 @@ class SystemSettings(Base):
     )
     site_short_name: Mapped[str] = mapped_column(
         String(50), nullable=False, default="qloop"
+    )
+
+    # 邮件通知总开关(超管可设置)
+    email_notification_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
     )
 
     # Audit

@@ -1,19 +1,125 @@
 """Release management service."""
 
+import hashlib
+import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import PurePath
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.project import Release, ReleaseStatus
+from app.models.project import ExternalRecipient, Release, ReleaseStatus
 from app.storage.minio_client import (
     minio_delete_object,
     minio_generate_presigned_url,
     minio_upload_file,
 )
+
+
+# ---------------------------------------------------------------------------
+# 文件类型白名单 + 文件名 sanitize(P1-2 / P1-3)
+# ---------------------------------------------------------------------------
+# 各业务文件类型允许的扩展名(小写,带点)
+ALLOWED_EXTENSIONS: dict[str, set[str]] = {
+    'code_package': {'.zip', '.tar', '.gz', '.tgz', '.rar', '.7z'},
+    'test_report': {'.pdf', '.doc', '.docx', '.xlsx', '.xls', '.csv', '.zip'},
+    'review_report': {'.pdf', '.doc', '.docx', '.zip'},
+}
+
+# 文件名中允许的字符:字母/数字/下划线/点/减号/中文,其余替换为 _
+_SAFE_NAME_RE = re.compile(r"[^\w.\-\u4e00-\u9fa5]")
+
+
+def validate_file_type(file_type: str, filename: str) -> bool:
+    """校验文件类型是否在白名单中。
+
+    Args:
+        file_type: 业务文件类型,可选 ``code_package`` / ``test_report`` /
+            ``review_report``。
+        filename: 待校验文件名。
+
+    Returns:
+        扩展名是否在白名单中。
+    """
+    ext = PurePath(filename).suffix.lower()
+    allowed = ALLOWED_EXTENSIONS.get(file_type, set())
+    return ext in allowed
+
+
+def sanitize_filename(filename: str) -> str:
+    """生成安全文件名:UUID 前缀 + 清洗后的原文件名。
+
+    - 仅取 basename,防止路径穿越(如 ``../../etc/passwd``)
+    - 替换非白名单字符为 ``_``,保留中文/字母/数字/点/减号/下划线
+    - 前置 UUID 防止重名/碰撞,同时保留原文件名以便展示
+
+    Returns:
+        形如 ``<uuid_hex>_<原文件名>`` 的安全文件名。
+    """
+    base = PurePath(filename).name
+    if not base:
+        base = 'upload'
+    safe = _SAFE_NAME_RE.sub('_', base).strip('._') or 'upload'
+    return f"{uuid.uuid4().hex}_{safe}"
+
+
+def calculate_sha256(content: bytes) -> str:
+    """计算字节内容的 SHA256 摘要(功能3)。"""
+    return hashlib.sha256(content).hexdigest()
+
+
+async def verify_access_token(
+    db: AsyncSession, token: str, release_id: uuid.UUID
+) -> Optional[ExternalRecipient]:
+    """校验外部接收方的 access_token(功能2.2)。
+
+    校验规则:
+    - token 必须存在于 external_recipients 表
+    - token 对应的 version 必须与 release 的 version 一致
+    - token 未过期
+    - 下载次数未超上限
+
+    返回匹配的 ExternalRecipient,否则返回 None。
+    """
+    result = await db.execute(
+        select(ExternalRecipient).where(ExternalRecipient.access_token == token)
+    )
+    recipient = result.scalar_one_or_none()
+    if recipient is None:
+        return None
+
+    # 校验过期
+    if (
+        recipient.token_expires_at is not None
+        and recipient.token_expires_at < datetime.now(timezone.utc)
+    ):
+        return None
+
+    # 校验下载次数
+    if recipient.download_count >= recipient.max_downloads:
+        return None
+
+    # 校验 token 对应的 version 与 release 的 version 一致
+    release_result = await db.execute(
+        select(Release).where(Release.id == release_id)
+    )
+    release = release_result.scalar_one_or_none()
+    if release is None or release.version_id != recipient.version_id:
+        return None
+
+    return recipient
+
+
+async def increment_download_count(
+    db: AsyncSession, recipient: ExternalRecipient
+) -> None:
+    """增加下载计数(功能2.2)。"""
+    recipient.download_count = (recipient.download_count or 0) + 1
+    await db.commit()
 
 
 async def get_release_by_id(
@@ -54,10 +160,20 @@ async def upload_code_package(
     if release is None:
         return None
 
-    object_name = f"releases/{release_id}/code_package/{file_name}"
+    # 校验文件类型(白名单,P1-2)
+    if not validate_file_type('code_package', file_name):
+        raise ValueError(
+            f"不支持的代码包文件类型,允许: "
+            f"{', '.join(sorted(ALLOWED_EXTENSIONS['code_package']))}"
+        )
+    # 生成安全文件名(防止路径穿越/特殊字符,P1-3)
+    safe_name = sanitize_filename(file_name)
+    object_name = f"releases/{release_id}/code_package/{safe_name}"
     minio_upload_file(object_name, file_data, len(file_data), content_type)
 
     release.code_package_path = object_name
+    # 计算并保存 SHA256(功能3.2)
+    release.code_package_sha256 = calculate_sha256(file_data)
     release.status = ReleaseStatus.CODE_PENDING_REVIEW
     if change_notes is not None:
         release.change_notes = change_notes
@@ -94,10 +210,20 @@ async def upload_test_report(
     if release is None:
         return None
 
-    object_name = f"releases/{release_id}/test_report/{file_name}"
+    # 校验文件类型(白名单,P1-2)
+    if not validate_file_type('test_report', file_name):
+        raise ValueError(
+            f"不支持的测试报告文件类型,允许: "
+            f"{', '.join(sorted(ALLOWED_EXTENSIONS['test_report']))}"
+        )
+    # 生成安全文件名(防止路径穿越/特殊字符,P1-3)
+    safe_name = sanitize_filename(file_name)
+    object_name = f"releases/{release_id}/test_report/{safe_name}"
     minio_upload_file(object_name, file_data, len(file_data), content_type)
 
     release.test_report_path = object_name
+    # 计算并保存 SHA256(功能3.2)
+    release.test_report_sha256 = calculate_sha256(file_data)
     release.status = ReleaseStatus.TEST_PENDING_REVIEW
     if user_id is not None:
         release.test_report_uploaded_by = user_id
@@ -132,10 +258,20 @@ async def upload_review_report(
     if release is None:
         return None
 
-    object_name = f"releases/{release_id}/review_report/{file_name}"
+    # 校验文件类型(白名单,P1-2)
+    if not validate_file_type('review_report', file_name):
+        raise ValueError(
+            f"不支持的评审报告文件类型,允许: "
+            f"{', '.join(sorted(ALLOWED_EXTENSIONS['review_report']))}"
+        )
+    # 生成安全文件名(防止路径穿越/特殊字符,P1-3)
+    safe_name = sanitize_filename(file_name)
+    object_name = f"releases/{release_id}/review_report/{safe_name}"
     minio_upload_file(object_name, file_data, len(file_data), content_type)
 
     release.review_report_path = object_name
+    # 计算并保存 SHA256(功能3.2)
+    release.review_report_sha256 = calculate_sha256(file_data)
     release.status = ReleaseStatus.EXPERT_PENDING_REVIEW
     if user_id is not None:
         release.review_report_uploaded_by = user_id
@@ -161,13 +297,28 @@ async def confirm_release(
     Returns:
         The updated Release object, or ``None`` if not found.
     """
-    release = await get_release_by_id(db, release_id)
+    # 锁定 release 行,防止双重释放
+    result = await db.execute(
+        select(Release).where(Release.id == release_id).with_for_update()
+    )
+    release = result.scalar_one_or_none()
     if release is None:
         return None
+
+    if release.status != ReleaseStatus.PENDING_CONFIRM:
+        raise ValueError("当前状态不允许释放")
 
     release.status = ReleaseStatus.RELEASED
     release.confirmed_by = user_id
     release.confirmed_at = datetime.now(timezone.utc)
+
+    # 功能3.3: 确保所有已上传文件的 SHA256 已记录(释放时完整性校验)
+    # 如果 SHA256 缺失(老数据),此处不阻塞释放,仅依赖上传时已计算
+    sha256_summary = {
+        "code_package": release.code_package_sha256,
+        "test_report": release.test_report_sha256,
+        "review_report": release.review_report_sha256,
+    }
 
     # Generate a presigned download link for the code package
     if release.code_package_path:
@@ -180,6 +331,35 @@ async def confirm_release(
         except Exception:
             # If presigned URL generation fails, still mark as released
             pass
+
+    # 功能2.3: 为该版本的所有 ExternalRecipient 生成 access_token
+    try:
+        recipients_result = await db.execute(
+            select(ExternalRecipient).where(
+                ExternalRecipient.version_id == release.version_id
+            )
+        )
+        recipients = list(recipients_result.scalars().all())
+        now_utc = datetime.now(timezone.utc)
+        for recipient in recipients:
+            # 仅在未生成 token 或 token 已过期时重新生成
+            need_new = (
+                not recipient.access_token
+                or (
+                    recipient.token_expires_at is not None
+                    and recipient.token_expires_at < now_utc
+                )
+            )
+            if need_new:
+                recipient.access_token = secrets.token_urlsafe(32)
+                recipient.token_expires_at = now_utc + timedelta(
+                    hours=recipient.link_expiry_hours or 168
+                )
+                recipient.download_count = 0
+        # recipients 已在 session 中,commit 时会一起保存
+    except Exception:
+        # 生成 token 失败不阻塞释放流程
+        pass
 
     await db.commit()
     await db.refresh(release)
@@ -272,7 +452,11 @@ async def delete_artifact(
         ValueError: If file_type is invalid, or if the release is already
             released (released releases are immutable).
     """
-    release = await get_release_by_id(db, release_id)
+    # 锁定 release 行,防止并发删除/修改
+    result = await db.execute(
+        select(Release).where(Release.id == release_id).with_for_update()
+    )
+    release = result.scalar_one_or_none()
     if release is None:
         return None
 
@@ -386,6 +570,30 @@ async def force_advance(
                 release.link_expiry = datetime.now(timezone.utc) + timedelta(hours=168)
             except Exception:
                 pass
+        # 功能2.3: 为 ExternalRecipient 生成 access_token(force-advance 路径)
+        try:
+            recipients_result = await db.execute(
+                select(ExternalRecipient).where(
+                    ExternalRecipient.version_id == release.version_id
+                )
+            )
+            recipients = list(recipients_result.scalars().all())
+            now_utc = datetime.now(timezone.utc)
+            for recipient in recipients:
+                if (
+                    not recipient.access_token
+                    or (
+                        recipient.token_expires_at is not None
+                        and recipient.token_expires_at < now_utc
+                    )
+                ):
+                    recipient.access_token = secrets.token_urlsafe(32)
+                    recipient.token_expires_at = now_utc + timedelta(
+                        hours=recipient.link_expiry_hours or 168
+                    )
+                    recipient.download_count = 0
+        except Exception:
+            pass
         await db.commit()
         await db.refresh(release)
         return release

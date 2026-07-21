@@ -2,7 +2,7 @@
  * 释放管理 API
  */
 import request from './request'
-import type { Release, ReleaseListItem } from '@/types'
+import type { ExternalRecipientLink, Release, ReleaseListItem } from '@/types'
 
 /** 获取释放详情 */
 export function getRelease(id: string): Promise<Release> {
@@ -97,4 +97,12 @@ export async function downloadArtifact(
 /** 获取某版本的所有释放列表 */
 export function getReleasesByVersion(versionId: string): Promise<ReleaseListItem[]> {
   return request.get(`/releases/by-version/${versionId}`)
+}
+
+
+/** 获取 release 对应版本的外部接收方下载链接(含 access_token,功能2.4) */
+export function getExternalDownloadLinks(
+  releaseId: string,
+): Promise<ExternalRecipientLink[]> {
+  return request.get(`/releases/${releaseId}/external-download-links`)
 }

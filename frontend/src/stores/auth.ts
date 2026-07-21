@@ -9,7 +9,10 @@ import type { LoginRequest, SystemRole, User } from '@/types'
 
 export const useAuthStore = defineStore('auth', () => {
   // state
-  const token = ref<string>(localStorage.getItem('token') || '')
+  // P2-8: token 初始化优先读 localStorage,再回退到 sessionStorage(不记住我场景)
+  const token = ref<string>(
+    localStorage.getItem('token') || sessionStorage.getItem('token') || '',
+  )
   const user = ref<User | null>(null)
 
   // getters
@@ -28,10 +31,30 @@ export const useAuthStore = defineStore('auth', () => {
 
   // actions
   /** 登录 */
-  async function login(payload: LoginRequest): Promise<void> {
+  async function login(payload: LoginRequest, remember = true): Promise<void> {
     const res = await loginApi(payload)
     token.value = res.access_token
-    localStorage.setItem('token', res.access_token)
+    // P2-8: 记住我勾选时 token 存 localStorage(关闭浏览器仍保留);
+    // 不勾选时存 sessionStorage(关闭浏览器即失效)
+    if (remember) {
+      localStorage.setItem('token', res.access_token)
+      localStorage.setItem('remember_me', 'true')
+      // 清理可能存在的 sessionStorage 残留
+      sessionStorage.removeItem('token')
+      sessionStorage.removeItem('refresh_token')
+    } else {
+      sessionStorage.setItem('token', res.access_token)
+      localStorage.setItem('remember_me', 'false')
+      // 不记住时仍把 refresh_token 存 localStorage,便于刷新页面后尝试续期
+      localStorage.removeItem('token')
+    }
+    // 保存 refresh token(P1-9),用于 access token 过期后换新
+    if (res.refresh_token) {
+      localStorage.setItem('refresh_token', res.refresh_token)
+      if (!remember) {
+        sessionStorage.setItem('refresh_token', res.refresh_token)
+      }
+    }
     // 登录后拉取完整用户信息
     await fetchCurrentUser()
   }
@@ -52,6 +75,20 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = ''
     user.value = null
     localStorage.removeItem('token')
+    // 同步清理 refresh token(P1-9)
+    localStorage.removeItem('refresh_token')
+    // P2-7: 清理可能残留的用户相关 localStorage(如记住我、站点偏好等)
+    localStorage.removeItem('user')
+    localStorage.removeItem('remember_me')
+    Object.keys(localStorage).forEach((key) => {
+      // 清理 qloop_ 与 site_ 前缀的缓存数据
+      if (key.startsWith('qloop_') || key.startsWith('site_')) {
+        localStorage.removeItem(key)
+      }
+    })
+    // P2-8: 同步清理 sessionStorage 中的会话级 token(若使用了"不记住我"模式)
+    sessionStorage.removeItem('token')
+    sessionStorage.removeItem('refresh_token')
   }
 
   return {

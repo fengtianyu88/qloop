@@ -1,12 +1,37 @@
 """User-related Pydantic schemas."""
 
+import re
 import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models.user import SystemRole
+
+
+# ---------------------------------------------------------------------------
+# 密码强度规则(P1-8)
+# ---------------------------------------------------------------------------
+# 至少 8 位,且同时包含字母和数字
+PASSWORD_PATTERN = re.compile(r"^(?=.*[A-Za-z])(?=.*\d).{8,}$")
+
+
+def _check_password_strength(value: str) -> str:
+    """校验密码强度:至少 8 位,且同时包含字母和数字。
+
+    Args:
+        value: 待校验的明文密码。
+
+    Returns:
+        校验通过的密码(原样返回)。
+
+    Raises:
+        ValueError: 密码不符合强度要求。
+    """
+    if not PASSWORD_PATTERN.match(value):
+        raise ValueError("密码必须至少 8 位,且包含字母和数字")
+    return value
 
 
 class UserCreate(BaseModel):
@@ -21,6 +46,12 @@ class UserCreate(BaseModel):
     department: Optional[str] = None
     section: Optional[str] = None
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        """校验密码强度(P1-8)。"""
+        return _check_password_strength(v)
+
 
 class UserUpdate(BaseModel):
     """Schema for updating a user."""
@@ -33,6 +64,14 @@ class UserUpdate(BaseModel):
     section: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: Optional[str]) -> Optional[str]:
+        """校验密码强度(P1-8);未传密码时跳过。"""
+        if v is None:
+            return v
+        return _check_password_strength(v)
 
 
 class UserResponse(BaseModel):
@@ -64,6 +103,8 @@ class TokenResponse(BaseModel):
     """Schema for authentication token responses."""
 
     access_token: str
+    # Refresh token(P1-9):登录时一并下发,前端用于在 access token 过期后换新
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     user_id: uuid.UUID
     username: str
@@ -80,6 +121,12 @@ class RegisterRequest(BaseModel):
     department: Optional[str] = None
     section: Optional[str] = None
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        """校验密码强度(P1-8)。"""
+        return _check_password_strength(v)
+
 
 class ForgotPasswordRequest(BaseModel):
     """Schema for requesting a password reset."""
@@ -92,3 +139,9 @@ class ResetPasswordRequest(BaseModel):
 
     token: str
     new_password: str = Field(..., min_length=6, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        """校验新密码强度(P1-8)。"""
+        return _check_password_strength(v)

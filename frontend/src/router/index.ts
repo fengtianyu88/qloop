@@ -141,9 +141,16 @@ router.beforeEach(async (to, _from, next) => {
     return
   }
 
-  // 已有 token 但尚未拉取用户信息
-  if (!authStore.user) {
-    await authStore.fetchCurrentUser()
+  // P2-6: 已有 token 但 user 为空(典型场景:刷新页面后 Pinia 状态丢失),
+  // 重新拉取当前用户信息;若拉取失败(token 失效)则登出并跳登录
+  if (authStore.isLoggedIn && !authStore.user) {
+    try {
+      await authStore.fetchCurrentUser()
+    } catch {
+      // fetchCurrentUser 内部已 logout,这里仅需跳登录
+      next({ path: '/login', query: { redirect: to.fullPath } })
+      return
+    }
     if (!authStore.isLoggedIn) {
       next({ path: '/login', query: { redirect: to.fullPath } })
       return

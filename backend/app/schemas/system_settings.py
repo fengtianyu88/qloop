@@ -15,6 +15,7 @@ class SystemSettingsResponse(BaseModel):
     id: UUID
     site_name: str
     site_short_name: str
+    email_notification_enabled: bool = False
     updated_by: Optional[UUID] = None
     updated_at: Optional[datetime] = None
     created_at: datetime
@@ -25,6 +26,7 @@ class SystemSettingsUpdate(BaseModel):
 
     site_name: Optional[str] = Field(None, min_length=1, max_length=100)
     site_short_name: Optional[str] = Field(None, min_length=1, max_length=50)
+    email_notification_enabled: Optional[bool] = None
 
 
 class PublicSiteInfo(BaseModel):

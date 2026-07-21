@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Download, Upload } from '@element-plus/icons-vue'
-import { getOrgTree, createOrg, createAdminScope, getAdminScopes, deleteAdminScope, getOrgAdminScopes } from '@/api/organizations'
+import { getOrgTree, createOrg, updateOrg, deleteOrg, createAdminScope, getAdminScopes, deleteAdminScope, getOrgAdminScopes } from '@/api/organizations'
 import { getUsers } from '@/api/users'
 import { downloadOrganizationsTemplate, importOrganizations } from '@/api/imports'
 import { useAuthStore } from '@/stores/auth'
@@ -118,6 +118,80 @@ function openChildOrgDialog(node: OrgTreeNode) {
   orgForm.description = ''
   orgForm._parentName = node.name
   orgDialogVisible.value = true
+}
+
+// 功能3: 表格行操作 - 添加子节点 / 编辑 / 删除
+function handleAddChild(row: OrgTreeNode) {
+  openChildOrgDialog(row)
+}
+
+// 编辑组织单元
+const editDialogVisible = ref(false)
+const editFormRef = ref<FormInstance>()
+const editForm = reactive<{
+  id: string
+  name: string
+  org_type: OrgType
+  description: string
+}>({
+  id: '',
+  name: '',
+  org_type: 'department',
+  description: '',
+})
+const editRules: FormRules<{ name: string }> = {
+  name: [{ required: true, message: '请输入组织名称', trigger: 'blur' }],
+}
+const editSubmitting = ref(false)
+
+function handleEdit(row: OrgTreeNode) {
+  editForm.id = row.id
+  editForm.name = row.name
+  editForm.org_type = row.org_type
+  editForm.description = row.description || ''
+  editDialogVisible.value = true
+}
+
+async function handleEditSubmit() {
+  if (!editFormRef.value) return
+  await editFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    editSubmitting.value = true
+    try {
+      await updateOrg(editForm.id, {
+        name: editForm.name,
+        org_type: editForm.org_type,
+        description: editForm.description || undefined,
+      })
+      ElMessage.success('组织更新成功')
+      editDialogVisible.value = false
+      await loadTree()
+    } catch {
+      // 错误已统一提示
+    } finally {
+      editSubmitting.value = false
+    }
+  })
+}
+
+async function handleDelete(row: OrgTreeNode) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除组织单元「${row.name}」吗?若存在子节点或关联用户将拒绝删除。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return  // 用户取消
+  }
+  try {
+    await deleteOrg(row.id)
+    ElMessage.success('组织已删除')
+    await loadTree()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || '删除失败'
+    ElMessage.error(msg)
+  }
 }
 
 async function handleCreateOrg() {
@@ -309,28 +383,34 @@ onMounted(async () => {
             </div>
           </template>
           <el-empty v-if="!treeData.length" description="暂无组织数据" />
-          <el-tree
+          <!-- 功能3: 树形表格展示组织架构 -->
+          <el-table
             v-else
             :data="treeData"
-            :props="treeProps"
-            node-key="id"
+            row-key="id"
+            :tree-props="{ children: 'children', hasChildren: 'hasChildren' }"
+            border
             default-expand-all
           >
-            <template #default="{ data }">
-              <div class="tree-node">
-                <span class="tree-node-name">{{ data.name }}</span>
+            <el-table-column prop="name" label="组织名称" min-width="180" show-overflow-tooltip />
+            <el-table-column label="类型" width="100">
+              <template #default="{ row }">
                 <el-tag size="small" type="info" effect="plain">
-                  {{ orgTypeLabel[data.org_type as OrgType] || data.org_type }}
+                  {{ orgTypeLabel[row.org_type as OrgType] || row.org_type }}
                 </el-tag>
-                <template v-if="data.manager_names && data.manager_names.length">
+              </template>
+            </el-table-column>
+            <el-table-column label="管理者" min-width="180">
+              <template #default="{ row }">
+                <template v-if="row.manager_names && row.manager_names.length">
                   <el-tag
-                    v-for="m in data.manager_names"
+                    v-for="m in row.manager_names"
                     :key="m"
                     size="small"
                     type="success"
                     effect="dark"
                     class="manager-tag"
-                    @click.stop="openManagerDialog(data)"
+                    @click.stop="openManagerDialog(row)"
                   >
                     <el-icon style="margin-right: 2px"><User /></el-icon>{{ m }}
                   </el-tag>
@@ -340,16 +420,23 @@ onMounted(async () => {
                   link
                   size="small"
                   class="manage-managers-btn"
-                  @click.stop="openManagerDialog(data)"
+                  @click.stop="openManagerDialog(row)"
                 >
                   管理者
                 </el-button>
-                <el-button type="primary" link size="small" @click.stop="openChildOrgDialog(data)">
-                  新增子节点
-                </el-button>
-              </div>
-            </template>
-          </el-tree>
+              </template>
+            </el-table-column>
+            <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.description || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="240" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" @click="handleAddChild(row)">添加子节点</el-button>
+                <el-button size="small" @click="handleEdit(row)">编辑</el-button>
+                <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
         </el-card>
       </el-col>
 
@@ -492,6 +579,29 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="orgDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="orgSubmitting" @click="handleCreateOrg">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 功能3: 编辑组织对话框 -->
+    <el-dialog v-model="editDialogVisible" title="编辑组织单元" width="480px">
+      <el-form ref="editFormRef" :model="editForm" :rules="editRules" label-width="90px">
+        <el-form-item label="组织名称" prop="name">
+          <el-input v-model="editForm.name" placeholder="请输入组织名称" />
+        </el-form-item>
+        <el-form-item label="组织类型" prop="org_type">
+          <el-select v-model="editForm.org_type" style="width: 100%">
+            <el-option label="部门" value="department" />
+            <el-option label="处室" value="division" />
+            <el-option label="小组" value="group" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="editForm.description" type="textarea" :rows="3" placeholder="描述（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editSubmitting" @click="handleEditSubmit">保存</el-button>
       </template>
     </el-dialog>
   </div>

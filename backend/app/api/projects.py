@@ -382,7 +382,7 @@ async def create_version_endpoint(
 
 @router.delete(
     "/{project_id}/versions/{version_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    status_code=status.HTTP_200_OK,
 )
 async def delete_version_endpoint(
     project_id: uuid.UUID,
@@ -390,7 +390,10 @@ async def delete_version_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Delete a version.
+    """归档(软删除)一个版本(P1-11)。
+
+    实际不删除数据,仅标记 ``is_deleted=True``;版本不再出现在列表/搜索中,
+    但其 releases/external_recipients 仍保留以保持审计可追溯。
 
     Permission rules:
     - super_admin: can delete ANY version (including released)
@@ -450,9 +453,11 @@ async def delete_version_endpoint(
         details={
             "project_id": str(project_id),
             "deleted_by_role": current_user.system_role.value,
+            # 标记本次为软删除,便于审计区分
+            "soft_delete": True,
         },
     )
-    return None
+    return {"message": "版本已归档"}
 
 
 @router.get("/{project_id}/versions")
@@ -479,3 +484,90 @@ async def list_project_versions(
             it["latest_release_status"] = it["latest_release_status"].value
     return items
 
+
+@router.get("/{project_id}/dashboard")
+async def get_project_dashboard(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """项目概览:版本数、待评审、待释放、已释放、阻塞中。
+
+    统计该项目下所有版本的最新 release 状态分布,用于项目首页概览卡片。
+    """
+    from sqlalchemy import func as _func, select as _select
+    from app.models.project import Version, Release, ReleaseStatus
+
+    # 1. 校验项目存在 & 当前用户有访问权限
+    project = await get_project_by_id(db=db, project_id=project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+    has_access = await check_project_access(db, current_user, project_id)
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this project",
+        )
+
+    # 2. 版本总数
+    total_result = await db.execute(
+        _select(_func.count(Version.id)).where(Version.project_id == project_id)
+    )
+    total = int(total_result.scalar() or 0)
+
+    # 3. 取每个版本最新的 release(每个 version 取 release_number 最大的一条)
+    #    用子查询拿到每个 version 的最大 release_number,再 join 拿到对应 status
+    max_release_subq = (
+        _select(
+            Release.version_id,
+            _func.max(Release.release_number).label("max_release_number"),
+        )
+        .group_by(Release.version_id)
+        .subquery()
+    )
+    latest_releases_q = _select(Release.status).join(
+        max_release_subq,
+        (Release.version_id == max_release_subq.c.version_id)
+        & (Release.release_number == max_release_subq.c.max_release_number),
+    ).join(
+        Version, Version.id == Release.version_id
+    ).where(Version.project_id == project_id)
+
+    rows = (await db.execute(latest_releases_q)).scalars().all()
+
+    # 4. 按状态归类
+    #    - draft: 草稿
+    #    - in_review: 评审中(code_pending_review / test_pending_review / expert_pending_review)
+    #    - pending_confirm: 待释放
+    #    - released: 已释放
+    #    - failed: 阻塞中(review_failed)
+    draft = 0
+    in_review = 0
+    pending_confirm = 0
+    released = 0
+    failed = 0
+    for st in rows:
+        # st 可能是枚举或字符串,统一转字符串比较
+        s = st.value if hasattr(st, "value") else str(st)
+        if s == "draft":
+            draft += 1
+        elif s in ("code_pending_review", "test_pending_review", "expert_pending_review"):
+            in_review += 1
+        elif s == "pending_confirm":
+            pending_confirm += 1
+        elif s == "released":
+            released += 1
+        elif s == "review_failed":
+            failed += 1
+
+    return {
+        "total": total,
+        "draft": draft,
+        "in_review": in_review,
+        "pending_confirm": pending_confirm,
+        "released": released,
+        "failed": failed,
+    }

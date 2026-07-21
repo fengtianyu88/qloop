@@ -34,6 +34,7 @@ async def update_system_settings(
     db: AsyncSession,
     site_name: Optional[str] = None,
     site_short_name: Optional[str] = None,
+    email_notification_enabled: Optional[bool] = None,
     updated_by: Optional[UUID] = None,
 ) -> SystemSettings:
     """Update the singleton settings row."""
@@ -42,6 +43,8 @@ async def update_system_settings(
         settings.site_name = site_name
     if site_short_name is not None:
         settings.site_short_name = site_short_name
+    if email_notification_enabled is not None:
+        settings.email_notification_enabled = email_notification_enabled
     if updated_by is not None:
         settings.updated_by = updated_by
     await db.commit()

@@ -262,6 +262,17 @@ async def execute_review(
     # 2. Load the review rule (with primary + fallback models).
     rule = await _get_review_rule(db, review_type)
 
+    # 在创建新 PENDING 评审前,检查是否已有 PENDING 评审(防止并发触发)
+    existing_pending = await db.execute(
+        select(LLMReview).where(
+            LLMReview.release_id == release_id,
+            LLMReview.review_type == review_type,
+            LLMReview.result == ReviewResult.PENDING,
+        )
+    )
+    if existing_pending.scalar_one_or_none():
+        raise ValueError("该评审类型已有进行中的评审,请等待完成")
+
     # 3. Create the PENDING review record.
     review_round = await _next_review_round(db, release_id, review_type)
     review = LLMReview(

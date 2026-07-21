@@ -51,3 +51,8 @@ export function getOrgAdminScopes(orgId: string): Promise<Array<{
 }>> {
   return request.get(`/organizations/org-units/${orgId}/admin-scopes`)
 }
+
+/** 删除组织单元(SUPER_ADMIN) */
+export function deleteOrg(id: string): Promise<void> {
+  return request.delete(`/organizations/${id}`)
+}

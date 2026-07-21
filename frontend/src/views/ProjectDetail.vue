@@ -37,6 +37,26 @@ interface VersionWithStatus extends Version {
 }
 const versions = ref<VersionWithStatus[]>([])
 
+// 功能1: 项目概览统计数据(版本数、待评审、待释放、已释放、阻塞中)
+interface ProjectDashboard {
+  total: number
+  draft: number
+  in_review: number
+  pending_confirm: number
+  released: number
+  failed: number
+}
+const stats = ref<ProjectDashboard>({ total: 0, draft: 0, in_review: 0, pending_confirm: 0, released: 0, failed: 0 })
+
+async function loadDashboard() {
+  try {
+    const data = await request.get(`/projects/${projectId.value}/dashboard`)
+    stats.value = data as unknown as ProjectDashboard
+  } catch {
+    // 概览加载失败不影响主流程,保持默认 0 值
+  }
+}
+
 // 是否为当前项目的 PM
 const isPm = computed(
   () => project.value?.pm_user_id === authStore.user?.id || authStore.isAdmin,
@@ -189,6 +209,8 @@ const editRules: FormRules<{ project_role: ProjectRole }> = {
   project_role: [{ required: true, message: '请选择角色', trigger: 'change' }],
 }
 const editSubmitting = ref(false)
+// 记录正在编辑的成员及其原始角色(用于角色变更二次确认)
+const editingMember = ref<(ProjectMember & { originalRole: ProjectRole }) | null>(null)
 
 /** 当前用户是否可对该成员行执行编辑/删除操作。 */
 function canMutateMember(row: ProjectMember): boolean {
@@ -206,6 +228,8 @@ function openEditDialog(row: ProjectMember) {
   editForm.id = row.id
   editForm.user_id = row.user_id
   editForm.project_role = row.project_role
+  // 记录原始角色,用于在保存时检测是否发生变更
+  editingMember.value = { ...row, originalRole: row.project_role }
   editDialogVisible.value = true
 }
 
@@ -213,6 +237,18 @@ async function handleEditMember() {
   if (!editFormRef.value) return
   await editFormRef.value.validate(async (valid) => {
     if (!valid) return
+    // 角色变更二次确认:避免误操作导致权限变化
+    if (editingMember.value && editingMember.value.originalRole !== editForm.project_role) {
+      try {
+        await ElMessageBox.confirm(
+          `确认将成员角色从「${roleLabel(editingMember.value.originalRole)}」改为「${roleLabel(editForm.project_role)}」吗?\n\n角色变更会影响该成员的权限,请确认操作。`,
+          '角色变更确认',
+          { type: 'warning', confirmButtonText: '确认变更', cancelButtonText: '取消' },
+        )
+      } catch {
+        return  // 用户取消,不执行保存
+      }
+    }
     editSubmitting.value = true
     try {
       const payload: ProjectMemberUpdate = { project_role: editForm.project_role }
@@ -316,6 +352,16 @@ onMounted(async () => {
       <el-button @click="goBack"><el-icon><ArrowLeft /></el-icon>返回</el-button>
       <h2 class="page-title">项目详情</h2>
     </div>
+
+    <!-- 功能1: 项目概览卡片 -->
+    <el-row :gutter="16" class="project-overview">
+      <el-col :span="4"><div class="overview-card"><div class="num">{{ stats.total }}</div><div class="label">版本总数</div></div></el-col>
+      <el-col :span="4"><div class="overview-card draft"><div class="num">{{ stats.draft }}</div><div class="label">草稿</div></div></el-col>
+      <el-col :span="4"><div class="overview-card review"><div class="num">{{ stats.in_review }}</div><div class="label">评审中</div></div></el-col>
+      <el-col :span="4"><div class="overview-card pending"><div class="num">{{ stats.pending_confirm }}</div><div class="label">待释放</div></div></el-col>
+      <el-col :span="4"><div class="overview-card released"><div class="num">{{ stats.released }}</div><div class="label">已释放</div></div></el-col>
+      <el-col :span="4"><div class="overview-card failed"><div class="num">{{ stats.failed }}</div><div class="label">阻塞中</div></div></el-col>
+    </el-row>
 
     <!-- 项目基本信息 -->
     <el-card class="table-card" shadow="never" v-if="project">
@@ -544,4 +590,36 @@ onMounted(async () => {
   color: var(--el-text-color-placeholder);
   font-size: 12px;
 }
+/* 功能1: 项目概览卡片 */
+.project-overview {
+  margin-bottom: 20px;
+}
+.overview-card {
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  padding: 16px 12px;
+  text-align: center;
+  transition: all 0.2s;
+}
+.overview-card:hover {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+.overview-card .num {
+  font-size: 28px;
+  font-weight: 600;
+  color: #303133;
+  line-height: 1.2;
+}
+.overview-card .label {
+  font-size: 13px;
+  color: #909399;
+  margin-top: 6px;
+}
+.overview-card.draft .num { color: #909399; }
+.overview-card.review .num { color: #e6a23c; }
+.overview-card.pending .num { color: #409eff; }
+.overview-card.released .num { color: #67c23a; }
+.overview-card.failed .num { color: #f56c6c; }
+
 </style>

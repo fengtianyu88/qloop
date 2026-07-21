@@ -14,13 +14,17 @@ from __future__ import annotations
 import uuid
 from typing import List
 
+import asyncio
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_roles
+from app.dependencies import get_current_user, get_current_user_sse, require_roles
 from app.models.project import Release, Version
 from app.models.review import LLMModel, LLMReview, ReviewRule, ReviewType
 from app.models.user import SystemRole, User
@@ -151,6 +155,17 @@ async def trigger_review(
     """
     release = await _get_release_and_check_access(db, release_id, current_user)
 
+    # 锁定 release 行,防止并发触发评审
+    lock_result = await db.execute(
+        select(Release).where(Release.id == release_id).with_for_update()
+    )
+    locked_release = lock_result.scalar_one_or_none()
+    if locked_release is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Release not found",
+        )
+
     # 预检:对应的 review_type 是否配置了启用的评审规则 + 启用的 LLM 模型
     # 避免触发 Celery 任务后才报错,让前端能给出明确提示
     rule_result = await db.execute(
@@ -209,4 +224,64 @@ async def trigger_review(
         task_id=async_result.id,
         release_id=str(release.id),
         review_type=review_type.value,
+    )
+
+
+@router.get("/stream/{release_id}")
+async def stream_review_progress(
+    release_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_sse),
+):
+    """SSE 端点:推送指定 release 的最新评审进度。
+
+    前端用 EventSource 接收,每 2 秒查询一次最新评审状态并推送;
+    当评审进入终态(passed/failed/error)时关闭流。
+    认证通过 query 参数 ?token=xxx 传递(EventSource 不支持自定义 header)。
+    """
+    async def event_generator():
+        while True:
+            try:
+                result = await db.execute(
+                    select(LLMReview)
+                    .where(LLMReview.release_id == release_id)
+                    .order_by(LLMReview.created_at.desc())
+                    .limit(1)
+                )
+                review = result.scalar_one_or_none()
+            except Exception as exc:  # 数据库异常不应中断流,推送错误事件后退出
+                err = {"error": str(exc)}
+                yield f"data: {json.dumps(err)}\n\n"
+                break
+
+            if review:
+                # result 枚举转字符串,便于前端处理
+                result_str = review.result.value if hasattr(review.result, "value") else str(review.result)
+                review_type_str = review.review_type.value if hasattr(review.review_type, "value") else str(review.review_type)
+                data = {
+                    "review_id": str(review.id),
+                    "result": result_str,
+                    "review_type": review_type_str,
+                    "review_round": review.review_round,
+                    "total_score": review.total_score,
+                    "conclusion": review.conclusion,
+                    "suggestions": review.suggestions,
+                    "model_used": review.model_used,
+                    "created_at": review.created_at.isoformat() if review.created_at else None,
+                    "completed_at": review.completed_at.isoformat() if review.completed_at else None,
+                }
+                yield f"data: {json.dumps(data)}\n\n"
+
+                # 终态:关闭流
+                if result_str in ("passed", "failed", "error"):
+                    break
+
+            # 心跳注释,保持连接
+            yield ": heartbeat\n\n"
+            await asyncio.sleep(2)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )

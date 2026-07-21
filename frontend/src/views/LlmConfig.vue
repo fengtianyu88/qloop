@@ -467,6 +467,11 @@ function truncate(text: string | null | undefined, len = 40): string {
   return text.length > len ? text.slice(0, len) + '…' : text
 }
 
+// 恢复维度阈值 JSON 为默认模板
+function resetDimensionTemplate() {
+  dimensionJsonText.value = DEFAULT_DIMENSION_JSON_TEXT
+}
+
 onMounted(async () => {
   await loadModels()
   await loadRules()
@@ -714,15 +719,21 @@ onMounted(async () => {
           <el-input-number v-model="ruleForm.pass_threshold" :min="0" :max="100" />
         </el-form-item>
         <el-form-item label="维度阈值 JSON">
-          <el-input
-            v-model="dimensionJsonText"
-            type="textarea"
-            :rows="8"
-            placeholder='{"completeness": {"threshold": 70, "weight": 0.3, "description": "完整性"}}'
-          />
-          <div class="api-base-hint">
-            <el-icon size="12"><InfoFilled /></el-icon>
-            <span>每个维度包含 <code>threshold</code>(0-100 阈值)、<code>weight</code>(0-1 权重,总和应为 1)、<code>description</code>(描述)。默认模板已填好 4 个维度:完整性、正确性、性能、安全性。可直接修改或新增维度。</span>
+          <div style="width: 100%">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+              <span class="form-hint" style="font-size: 12px; color: #909399">JSON 格式,定义各维度及权重</span>
+              <el-button size="small" link @click="resetDimensionTemplate">恢复默认模板</el-button>
+            </div>
+            <el-input
+              v-model="dimensionJsonText"
+              type="textarea"
+              :rows="8"
+              placeholder='{"completeness": {"threshold": 70, "weight": 0.3, "description": "完整性"}}'
+            />
+            <div class="api-base-hint">
+              <el-icon size="12"><InfoFilled /></el-icon>
+              <span>每个维度包含 <code>threshold</code>(0-100 阈值)、<code>weight</code>(0-1 权重,总和应为 1)、<code>description</code>(描述)。默认模板已填好 4 个维度:完整性、正确性、性能、安全性。可直接修改或新增维度。</span>
+            </div>
           </div>
         </el-form-item>
         <el-form-item label="Prompt 模板">
@@ -730,7 +741,7 @@ onMounted(async () => {
             v-model="promptText"
             type="textarea"
             :rows="6"
-            placeholder="请输入 Prompt 模板，可使用 {{变量}} 占位符"
+            placeholder="可使用 {content} 占位符(系统自动替换为评审内容)。例:请评审以下内容:{content}"
           />
         </el-form-item>
         <el-form-item label="状态">

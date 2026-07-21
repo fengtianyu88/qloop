@@ -144,6 +144,14 @@ class Version(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    # 软删除标记(P1-11):True 表示已归档,不在版本列表/搜索中展示。
+    # 数据库需 ALTER TABLE ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relationships
     project: Mapped["Project"] = relationship(
@@ -194,6 +202,16 @@ class Release(Base):
     )
     review_report_path: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True
+    )
+    # 释放包完整性校验:每个交付物的 SHA256(功能3)
+    code_package_sha256: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )
+    test_report_sha256: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )
+    review_report_sha256: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
     )
     # Track who uploaded each artifact and when (SOX audit requirement).
     code_package_uploaded_by: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -279,6 +297,15 @@ class ExternalRecipient(Base):
     access_scope: Mapped[str] = mapped_column(
         String(100), default="download_only", nullable=False
     )
+    # 外部接收方下载访问控制(功能2)
+    access_token: Mapped[Optional[str]] = mapped_column(
+        String(64), unique=True, index=True, nullable=True
+    )
+    token_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    download_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_downloads: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
 
     # Relationships
     version: Mapped["Version"] = relationship(

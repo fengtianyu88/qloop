@@ -93,6 +93,8 @@ export interface LoginRequest {
 /** 登录响应（Token） */
 export interface TokenResponse {
   access_token: string
+  /** Refresh token(P1-9):用于在 access token 过期后换取新 token */
+  refresh_token?: string
   token_type: string
   user_id: string
   username: string
@@ -162,6 +164,21 @@ export interface VersionCreate {
   expert_id?: string | null
 }
 
+/** 外部接收方下载链接(含 access_token,功能2) */
+export interface ExternalRecipientLink {
+  id: string
+  version_id: string
+  email: string
+  name: string | null
+  link_expiry_hours: number
+  access_scope: string
+  access_token: string | null
+  token_expires_at: string | null
+  download_count: number
+  max_downloads: number
+  download_link: string | null
+}
+
 /** 释放详情 */
 export interface Release {
   id: string
@@ -172,6 +189,10 @@ export interface Release {
   code_package_path: string | null
   test_report_path: string | null
   review_report_path: string | null
+  // 释放包完整性校验:SHA256(功能3)
+  code_package_sha256: string | null
+  test_report_sha256: string | null
+  review_report_sha256: string | null
   // Uploader info for each artifact (SOX audit traceability).
   code_package_uploaded_by: string | null
   code_package_uploaded_at: string | null
@@ -405,6 +426,7 @@ export interface SystemSettings {
   id: string
   site_name: string
   site_short_name: string
+  email_notification_enabled: boolean
   updated_by: string | null
   updated_at: string | null
   created_at: string
@@ -414,6 +436,7 @@ export interface SystemSettings {
 export interface SystemSettingsUpdate {
   site_name?: string
   site_short_name?: string
+  email_notification_enabled?: boolean
 }
 
 /** 公开站点信息（无需登录） */

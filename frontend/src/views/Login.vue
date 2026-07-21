@@ -18,6 +18,8 @@ onMounted(async () => {
 
 const loginFormRef = ref<FormInstance>()
 const loading = ref(false)
+// P2-8: 记住我 - 默认根据上次选择初始化
+const rememberMe = ref(localStorage.getItem('remember_me') !== 'false')
 
 const loginForm = reactive<LoginRequest>({
   username: '',
@@ -38,7 +40,8 @@ async function handleLogin() {
     if (!valid) return
     loading.value = true
     try {
-      await authStore.login(loginForm)
+      // P2-8: 把"记住我"选择传给 store,决定 token 存储位置
+      await authStore.login(loginForm, rememberMe.value)
       ElMessage.success('登录成功')
       const redirect = (route.query.redirect as string) || '/home'
       router.push(redirect)
@@ -85,6 +88,12 @@ async function handleLogin() {
             show-password
             clearable
           />
+        </el-form-item>
+        <el-form-item>
+          <!-- P2-8: 记住我 - 勾选时 token 存 localStorage,否则存 sessionStorage -->
+          <div class="login-options">
+            <el-checkbox v-model="rememberMe">记住我</el-checkbox>
+          </div>
         </el-form-item>
         <el-form-item>
           <el-button
@@ -164,6 +173,13 @@ async function handleLogin() {
   display: flex;
   justify-content: space-between;
   margin-top: 4px;
+}
+
+.login-options {
+  width: 100%;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
 }
 
 .login-footer {

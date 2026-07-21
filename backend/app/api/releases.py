@@ -1,5 +1,6 @@
 """Release management API routes."""
 
+import logging
 import uuid
 from typing import List, Optional
 
@@ -16,6 +17,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.project import Release, ReleaseStatus, Version
@@ -32,8 +34,12 @@ from app.services.release_service import (
     upload_code_package,
     upload_review_report,
     upload_test_report,
+    increment_download_count,
+    verify_access_token,
 )
 from app.storage.minio_client import minio_generate_presigned_url
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/releases", tags=["releases"])
 
@@ -166,6 +172,14 @@ async def upload_code_package_endpoint(
     """
     release = await _get_release_with_project_access(db, release_id, current_user)
 
+    # 校验文件大小,防止 OOM/DoS
+    max_size = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    if file.size and file.size > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"文件大小超过限制({settings.MAX_UPLOAD_SIZE_MB}MB)"
+        )
+
     file_data = await file.read()
     content_type = file.content_type or "application/octet-stream"
 
@@ -206,6 +220,14 @@ async def upload_test_report_endpoint(
     """
     release = await _get_release_with_project_access(db, release_id, current_user)
 
+    # 校验文件大小,防止 OOM/DoS
+    max_size = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    if file.size and file.size > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"文件大小超过限制({settings.MAX_UPLOAD_SIZE_MB}MB)"
+        )
+
     file_data = await file.read()
     content_type = file.content_type or "application/octet-stream"
 
@@ -244,6 +266,14 @@ async def upload_review_report_endpoint(
     ``EXPERT_PENDING_REVIEW``.
     """
     release = await _get_release_with_project_access(db, release_id, current_user)
+
+    # 校验文件大小,防止 OOM/DoS
+    max_size = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    if file.size and file.size > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"文件大小超过限制({settings.MAX_UPLOAD_SIZE_MB}MB)"
+        )
 
     file_data = await file.read()
     content_type = file.content_type or "application/octet-stream"
@@ -368,9 +398,11 @@ async def download_release_artifact(
             object_name=object_name, expiry_hours=1
         )
     except Exception as exc:  # pragma: no cover - defensive
+        # 记录完整异常栈到日志,但不向前端暴露内部细节
+        logger.error("Failed to generate download URL: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate download URL: {exc}",
+            detail="下载链接生成失败,请联系管理员",
         )
 
     # Record the download in audit log (SOX: who downloaded what, when).
@@ -385,6 +417,130 @@ async def download_release_artifact(
 
     return RedirectResponse(url=presigned_url, status_code=status.HTTP_302_FOUND)
 
+
+
+@router.get("/{release_id}/download-by-token/{file_type}")
+async def download_release_artifact_by_token(
+    release_id: uuid.UUID,
+    file_type: str,
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """功能2.2: 外部接收方通过 access_token 下载交付物(无需登录)。
+
+    访问链接形如:
+        /api/releases/{release_id}/download-by-token/{file_type}?token=xxx
+
+    校验规则:
+    - token 必须存在于 external_recipients 表
+    - token 对应的 version 必须与 release 的 version 一致
+    - token 未过期
+    - 下载次数未超上限
+    """
+    if file_type not in _FILE_TYPE_TO_FIELD:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file_type: {file_type}",
+        )
+
+    external_recipient = await verify_access_token(db, token, release_id)
+    if external_recipient is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="access_token 无效、已过期或下载次数已用尽",
+        )
+
+    release = await get_release_by_id(db=db, release_id=release_id)
+    if release is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Release not found",
+        )
+
+    object_name = getattr(release, _FILE_TYPE_TO_FIELD[file_type])
+    if not object_name:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{file_type} not uploaded for this release",
+        )
+
+    try:
+        presigned_url = minio_generate_presigned_url(
+            object_name=object_name, expiry_hours=1
+        )
+    except Exception as exc:
+        logger.error("Failed to generate download URL: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="下载链接生成失败,请联系管理员",
+        )
+
+    # 增加下载计数(功能2.2)
+    try:
+        await increment_download_count(db, external_recipient)
+    except Exception:
+        pass
+
+    # 审计日志:外部接收方下载
+    await create_audit_log(
+        db=db,
+        user_id=None,
+        action="download_artifact_by_token",
+        resource_type="release",
+        resource_id=str(release_id),
+        details={
+            "file_type": file_type,
+            "object_name": object_name,
+            "external_recipient_id": str(external_recipient.id),
+            "external_email": external_recipient.email,
+        },
+    )
+
+    return RedirectResponse(url=presigned_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/{release_id}/external-download-links")
+async def get_external_download_links(
+    release_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """功能2.4: 获取 release 对应版本的所有外部接收方下载链接(含 access_token)。
+
+    返回每个外部接收方的:
+    - email / name
+    - access_token
+    - token_expires_at
+    - download_count / max_downloads
+    - download_link (带 token 的下载链接,供前端直接展示)
+
+    仅项目成员/管理员可访问。
+    """
+    from app.models.project import ExternalRecipient
+    from app.schemas.project import ExternalRecipientResponse
+
+    release = await _get_release_with_project_access(db, release_id, current_user)
+
+    result = await db.execute(
+        select(ExternalRecipient).where(
+            ExternalRecipient.version_id == release.version_id
+        )
+    )
+    recipients = list(result.scalars().all())
+
+    # 构造响应:增加 download_link 字段
+    response = []
+    for r in recipients:
+        item = ExternalRecipientResponse.model_validate(r).model_dump()
+        # 生成带 token 的下载链接(供前端展示/复制)
+        if r.access_token:
+            base = f"/api/releases/{release_id}/download-by-token/code_package"
+            item["download_link"] = f"{base}?token={r.access_token}"
+        else:
+            item["download_link"] = None
+        response.append(item)
+
+    return response
 
 
 @router.delete("/{release_id}/artifacts/{file_type}", response_model=ReleaseResponse)

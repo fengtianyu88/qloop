@@ -213,11 +213,13 @@ async def create_version(
     Raises:
         ValueError: If the version_number already exists in the project.
     """
-    # Check for duplicate version_number within the project
+    # Check for duplicate version_number within the project.
+    # 仅检查未软删除的版本(P1-11):已归档的 version_number 可被复用。
     existing = await db.execute(
         select(Version).where(
             Version.project_id == project_id,
             Version.version_number == version_create.version_number,
+            Version.is_deleted == False,  # noqa: E712
         )
     )
     if existing.scalar_one_or_none() is not None:
@@ -321,7 +323,11 @@ async def delete_version(
     version_id: uuid.UUID,
     allow_released: bool = False,
 ) -> bool:
-    """Delete a version and cascade-delete its releases/external_recipients.
+    """软删除一个版本(P1-11)。
+
+    不再实际删除数据,仅将 ``is_deleted`` 标记为 ``True`` 并记录 ``deleted_at``。
+    软删除后的版本在版本列表/搜索中不可见,但其 releases/external_recipients
+    仍然保留,以保持审计与历史可追溯。
 
     Args:
         db: The async database session.
@@ -330,12 +336,19 @@ async def delete_version(
             (used when super_admin forces deletion). Defaults to False.
 
     Returns:
-        True if deleted, False if not found.
+        True if soft-deleted, False if not found or already soft-deleted.
     Raises:
         ValueError: if a release is already released and allow_released=False.
     """
+    from datetime import datetime, timezone
     from app.models.project import Release, ReleaseStatus
-    result = await db.execute(select(Version).where(Version.id == version_id))
+    # 仅查询未软删除的版本
+    result = await db.execute(
+        select(Version).where(
+            Version.id == version_id,
+            Version.is_deleted == False,  # noqa: E712
+        )
+    )
     version = result.scalar_one_or_none()
     if version is None:
         return False
@@ -354,7 +367,9 @@ async def delete_version(
                 f"{len(released_releases)} release(s) already released"
             )
 
-    await db.delete(version)
+    # 软删除(P1-11):仅标记,不实际删除行,保留审计/历史数据
+    version.is_deleted = True
+    version.deleted_at = datetime.now(timezone.utc)
     await db.commit()
     return True
 
@@ -375,6 +390,8 @@ async def list_versions_with_release_status(
         .select_from(Version)
         .outerjoin(Release, Release.version_id == Version.id)
         .where(Version.project_id == project_id)
+        # 过滤软删除版本(P1-11):已归档的版本不出现在列表中
+        .where(Version.is_deleted == False)  # noqa: E712
         .order_by(Version.created_at.desc())
     )
     result = await db.execute(stmt)

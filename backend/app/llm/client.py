@@ -21,6 +21,7 @@ Highlights:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -125,14 +126,17 @@ async def _call_openai(
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.3,
+        # P2-2: max_tokens 改为从 settings 读取,便于环境变量覆盖
         # Reasoning models (minimax-M3, DeepSeek-R1) emit a <think> block
         # before the final JSON; 4096 is too small and the JSON gets
         # truncated. 8192 leaves room for both reasoning and the payload.
-        "max_tokens": 8192,
+        "max_tokens": settings.LLM_MAX_TOKENS_OPENAI,
     }
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # P2-1: 区分连接超时与读取超时,连接 10 秒,读取使用传入 timeout
+        timeout_config = httpx.Timeout(connect=10, read=timeout or 300, write=10, pool=10)
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
             response = await client.post(url, headers=headers, json=payload)
     except httpx.TimeoutException:
         logger.warning("LLM (openai) call to %s timed out after %ss", url, timeout)
@@ -223,11 +227,14 @@ async def _call_anthropic(
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.3,
-        "max_tokens": 4096,
+        # P2-2: max_tokens 改为从 settings 读取,便于环境变量覆盖
+        "max_tokens": settings.LLM_MAX_TOKENS_ANTHROPIC,
     }
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # P2-1: 区分连接超时与读取超时,连接 10 秒,读取使用传入 timeout
+        timeout_config = httpx.Timeout(connect=10, read=timeout or 300, write=10, pool=10)
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
             response = await client.post(url, headers=headers, json=payload)
     except httpx.TimeoutException:
         logger.warning("LLM (anthropic) call to %s timed out after %ss", url, timeout)
@@ -302,27 +309,76 @@ async def call_llm(
     prompt: str,
     timeout: Optional[int] = None,
 ) -> LLMResponse:
-    """Call an LLM endpoint, dispatching by the model's configured protocol.
+    """调用 LLM,支持重试。
+
+    对瞬时网络错误(超时/连接错误)和可重试的 HTTP 错误进行指数退避重试,
+    重试次数由 ``settings.LLM_MAX_RETRIES`` 控制。
+    认证错误(401/403)或参数错误(400)不会重试,直接返回。
 
     Args:
-        model: The :class:`LLMModel` configuration (protocol, api_base,
-            api_key, model_name).
-        prompt: The user prompt to send.
-        timeout: Optional request timeout in seconds. Defaults to
-            ``settings.LLM_TIMEOUT``.
+        model: :class:`LLMModel` 配置(protocol / api_base / api_key / model_name)。
+        prompt: 发送给模型的用户提示词。
+        timeout: 请求超时秒数,默认使用 ``settings.LLM_TIMEOUT``。
 
     Returns:
-        An :class:`LLMResponse`. On success ``content`` holds the model's
-        message text and ``model_used`` the model name; on failure
-        ``success`` is ``False`` and ``error`` describes the problem.
+        :class:`LLMResponse`:成功时 ``content`` 为模型输出文本,
+        ``model_used`` 为模型名;失败时 ``success`` 为 ``False``,
+        ``error`` 描述失败原因。
     """
     if timeout is None:
         timeout = settings.LLM_TIMEOUT
 
-    if model.protocol == LLMProtocol.ANTHROPIC:
-        return await _call_anthropic(model, prompt, timeout)
-    # Default: OpenAI-compatible
-    return await _call_openai(model, prompt, timeout)
+    # 重试次数由配置控制,允许 0 次重试(只调用一次)
+    max_retries = settings.LLM_MAX_RETRIES
+    last_error: Optional[str] = None
+    last_response: Optional[LLMResponse] = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            if model.protocol == LLMProtocol.ANTHROPIC:
+                response = await _call_anthropic(model, prompt, timeout)
+            else:
+                # 默认: OpenAI 兼容协议
+                response = await _call_openai(model, prompt, timeout)
+
+            # 成功则直接返回
+            if response.success:
+                return response
+
+            # 认证错误(401/403)或参数错误(400)不重试,直接返回
+            if response.error and (
+                "HTTP 401" in response.error
+                or "HTTP 403" in response.error
+                or "HTTP 400" in response.error
+            ):
+                return response
+
+            last_response = response
+            last_error = response.error
+        except (httpx.TimeoutException, httpx.NetworkError, ConnectionError) as exc:
+            # 兜底:理论上 _call_* 已捕获这些异常并转为 LLMResponse.failure,
+            # 此处防御性处理避免重试循环因未捕获异常而中断。
+            last_error = str(exc)
+            last_response = None
+
+        # 还有重试次数则等待后重试(指数退避:1, 2, 4, 8, 10 秒)
+        if attempt < max_retries:
+            wait = min(2 ** attempt, 10)
+            logger.info(
+                "LLM 调用失败,第 %s 次重试(等待 %ss): %s",
+                attempt + 1,
+                wait,
+                last_error,
+            )
+            await asyncio.sleep(wait)
+
+    # 所有重试都失败:优先返回最后一次响应,否则构造失败响应
+    if last_response is not None:
+        return last_response
+    return LLMResponse.failure(
+        f"LLM 调用失败(重试 {max_retries} 次后仍失败): {last_error}",
+        model_used=model.model_name,
+    )
 
 
 # ---------------------------------------------------------------------------

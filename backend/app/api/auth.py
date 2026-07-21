@@ -1,10 +1,13 @@
 """Authentication API routes."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.dependencies import get_current_user
 from app.database import get_db
+from app.models.user import User
 from app.schemas.user import (
     ForgotPasswordRequest,
     LoginRequest,
@@ -17,10 +20,13 @@ from app.services.audit_service import create_audit_log
 from app.services.auth_service import (
     authenticate_user,
     create_token_for_user,
+    create_refresh_token,
     register_user,
     request_password_reset,
     reset_password,
+    verify_refresh_token,
 )
+from app.utils.security import create_access_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -28,16 +34,58 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 @router.post("/login", response_model=TokenResponse)
 async def login(
     request: LoginRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Authenticate a user and return a JWT access token."""
+    # 获取客户端 IP
+    ip = http_request.client.host if http_request.client else "unknown"
+    username = request.username
+
+    # 检查登录是否被锁定(防暴力破解)
+    redis = None
+    try:
+        from app.redis_client import get_redis
+        from app.services.auth_service import (
+            LOGIN_FAIL_LIMIT,
+            check_login_lock,
+            clear_login_fail,
+            record_login_fail,
+        )
+        redis = await get_redis()
+        locked, msg = await check_login_lock(redis, ip, username)
+        if locked:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=msg,
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # Redis 不可用时降级,不阻塞登录
+        redis = None
+
     user = await authenticate_user(db, request.username, request.password)
     if user is None:
+        # 记录登录失败
+        remaining = LOGIN_FAIL_LIMIT
+        if redis is not None:
+            try:
+                remaining = await record_login_fail(redis, ip, username)
+            except Exception:
+                remaining = LOGIN_FAIL_LIMIT
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
+            detail=f"用户名或密码错误,剩余尝试次数 {remaining}",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # 登录成功,清除失败计数
+    if redis is not None:
+        try:
+            await clear_login_fail(redis, ip, username)
+        except Exception:
+            pass
 
     await create_audit_log(
         db=db,
@@ -49,6 +97,91 @@ async def login(
     )
 
     return create_token_for_user(user)
+
+
+@router.post("/refresh")
+async def refresh_token_endpoint(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """用 refresh token 换取新的 access token(P1-9)。
+
+    请求体: ``{"refresh_token": "<token>"}``
+    成功返回: ``{"access_token": "<new_token>", "token_type": "bearer"}``
+
+    refresh token 无效/过期/类型不匹配均返回 401。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请求体必须是 JSON",
+        )
+    refresh_token = body.get("refresh_token") if isinstance(body, dict) else None
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="缺少 refresh_token",
+        )
+
+    user_id = verify_refresh_token(refresh_token)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="refresh_token 无效或已过期",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户不存在或已禁用",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 生成新的 access token
+    access_token = create_access_token({"sub": str(user.id)})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/logout")
+async def logout(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """P2-4: 登出,把当前 access token 加入 Redis 黑名单。
+
+    黑名单 key 为 ``blacklist:<token>``,过期时间与 access token 一致,
+    在 ``get_current_user`` 中检查,命中则拒绝请求。
+    """
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "", 1) if auth_header.startswith("Bearer ") else ""
+    if token:
+        try:
+            from app.redis_client import get_redis
+            redis = await get_redis()
+            # token 存入黑名单,过期时间与 access token 一致
+            await redis.setex(
+                f"blacklist:{token}",
+                settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                "1",
+            )
+        except Exception:
+            # Redis 不可用时降级:不阻断登出,只是该 token 在黑名单失效前仍可用
+            pass
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="logout",
+        resource_type="user",
+        resource_id=str(current_user.id),
+    )
+    return {"message": "已登出"}
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

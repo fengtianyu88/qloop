@@ -13,6 +13,7 @@ const updatedByName = ref<string | null>(null)
 const form = reactive<SystemSettingsUpdate>({
   site_name: '',
   site_short_name: '',
+  email_notification_enabled: false,
 })
 
 const rules: FormRules<SystemSettingsUpdate> = {
@@ -32,6 +33,7 @@ async function loadSettings() {
     const s = await getSystemSettings()
     form.site_name = s.site_name
     form.site_short_name = s.site_short_name
+    form.email_notification_enabled = s.email_notification_enabled ?? false
     lastUpdated.value = s.updated_at
     updatedByName.value = s.updated_by
   } catch {
@@ -124,6 +126,33 @@ onMounted(async () => {
 
     <el-card class="table-card" shadow="never">
       <template #header>
+        <div class="card-header">
+          <span>邮件通知</span>
+        </div>
+      </template>
+
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="开启后,评审触发、评审完成、版本释放等事件将通过邮件通知相关人员。SMTP 服务器等连接参数需在 .env 中配置。"
+        style="margin-bottom: 16px"
+      />
+
+      <el-form
+        :model="form"
+        label-width="140px"
+        style="max-width: 600px"
+      >
+        <el-form-item label="邮件通知">
+          <el-switch v-model="form.email_notification_enabled" />
+          <span class="form-hint">开启后,评审触发、评审完成、版本释放等事件将通过邮件通知相关人员</span>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card class="table-card" shadow="never">
+      <template #header>
         <span>说明</span>
       </template>
       <ul class="tips-list">
@@ -161,5 +190,11 @@ onMounted(async () => {
   border-radius: 3px;
   font-family: 'Monaco', 'Menlo', monospace;
   font-size: 13px;
+}
+
+.form-hint {
+  margin-left: 12px;
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
 }
 </style>
