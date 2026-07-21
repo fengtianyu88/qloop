@@ -52,6 +52,21 @@ async function handleLogin() {
     }
   })
 }
+
+// 演示账号快速登录
+const demoAccounts = [
+  { label: '项目经理', username: 'pm_zhangwei', icon: 'UserFilled', color: '#409eff' },
+  { label: '开发人员', username: 'dev_lisi', icon: 'Edit', color: '#67c23a' },
+  { label: '测试人员', username: 'tester_wangwu', icon: 'Document', color: '#e6a23c' },
+  { label: '外部专家', username: 'expert_zhaoliu', icon: 'Star', color: '#f56c6c' },
+]
+const DEMO_PASSWORD = 'Role@E2E2026'
+
+async function quickLogin(username: string) {
+  loginForm.username = username
+  loginForm.password = DEMO_PASSWORD
+  await handleLogin()
+}
 </script>
 
 <template>
@@ -110,6 +125,25 @@ async function handleLogin() {
       <div class="login-actions">
         <el-button text type="primary" @click="router.push('/register')">注册新账号</el-button>
         <el-button text type="info" @click="router.push('/forgot-password')">忘记密码？</el-button>
+      </div>
+
+      <!-- 演示账号快速登录 -->
+      <div class="demo-accounts">
+        <div class="demo-title">演示账号快速登录</div>
+        <div class="demo-buttons">
+          <el-button
+            v-for="acc in demoAccounts"
+            :key="acc.username"
+            size="small"
+            round
+            @click="quickLogin(acc.username)"
+          >
+            <el-icon :style="{ marginRight: '4px', color: acc.color }">
+              <component :is="acc.icon" />
+            </el-icon>
+            {{ acc.label }}
+          </el-button>
+        </div>
       </div>
 
       <div class="login-footer">
@@ -187,5 +221,25 @@ async function handleLogin() {
   margin-top: 18px;
   font-size: 12px;
   color: #c0c4cc;
+}
+
+.demo-accounts {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed #ebeef5;
+}
+
+.demo-title {
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.demo-buttons {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 </style>

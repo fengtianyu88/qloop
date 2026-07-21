@@ -86,9 +86,6 @@ let reviewElapsedTimer: ReturnType<typeof setInterval> | null = null
 let reviewHeartbeatTimer: ReturnType<typeof setInterval> | null = null
 const reviewLastLogAt = ref<number | null>(null)  // 上次产生日志的时间戳
 let lastLoggedStepKey = ''  // 上次记录日志的步骤标识(review_type + review_round + result)
-// LLM 流式输出状态(实时显示 LLM 返回的 chunk)
-const reviewStreamingChunk = ref('')  // 当前正在累积的 LLM chunk 文本
-const reviewReceivedFirstChunk = ref(false)  // 是否已收到首个 chunk
 
 // 添加进度日志
 function addProgressLog(msg: string, type: 'info'|'success'|'warning'|'error' = 'info') {
@@ -149,16 +146,8 @@ function startHeartbeat() {
   reviewHeartbeatTimer = setInterval(() => {
     if (reviewCurrentStatus.value === 'running') {
       const sinceLastLog = reviewLastLogAt.value ? (Date.now() - reviewLastLogAt.value) / 1000 : 999
-      if (!reviewReceivedFirstChunk.value) {
-        // 还没收到首个 chunk,提示"仍在等待 LLM 返回"
-        if (sinceLastLog >= 5) {
-          addProgressLog(`仍在等待 LLM 返回...已耗时 ${formatElapsed(reviewElapsedSec.value)}`, 'info')
-        }
-      } else {
-        // 已经开始流式输出,如果超过 30 秒没有新 chunk,提示"流式响应暂停"
-        if (sinceLastLog >= 30) {
-          addProgressLog(`LLM 流式响应暂停...已耗时 ${formatElapsed(reviewElapsedSec.value)}`, 'info')
-        }
+      if (sinceLastLog >= 5) {
+        addProgressLog(`仍在等待 LLM 返回...已耗时 ${formatElapsed(reviewElapsedSec.value)}`, 'info')
       }
     }
   }, 5000)
@@ -259,104 +248,36 @@ function startSSEStream() {
     } catch {
       return  // 忽略无法解析的消息(如心跳注释不会触发 onmessage)
     }
-
-    // 兼容老格式(无 type 字段,直接用 result 字段)
-    if (!data.type && data.result) {
-      data.type = 'final'
-    }
-
-    const label = reviewTypeLabel(data.review_type as ReviewType) || data.review_type || '评审'
-    const stepKey = `${data.review_type}|${data.review_round}|${data.result}`
-
-    switch (data.type) {
-      case 'connected':
-        // SSE 已建立,无需日志
-        return
-
-      case 'llm_start':
-        // LLM 开始调用,payload 是模型名
-        reviewCurrentStatus.value = 'running'
-        addProgressLog(`[${reviewCurrentStep.value}] 开始调用 LLM: ${data.payload || '未知模型'}`, 'info')
-        return
-
-      case 'chunk': {
-        // LLM 流式 chunk,累积到 streamingChunk
-        const chunkText: string = data.payload || ''
-        if (!reviewReceivedFirstChunk.value) {
-          reviewReceivedFirstChunk.value = true
-          addProgressLog(`LLM 已开始返回内容,实时输出:`, 'info')
-        }
-        reviewStreamingChunk.value += chunkText
-        reviewLastLogAt.value = Date.now()
-        return
-      }
-
-      case 'llm_done': {
-        // LLM 调用结束,把累积的 chunk 转为完整日志
-        if (reviewStreamingChunk.value) {
-          const fullContent = reviewStreamingChunk.value
-          reviewStreamingChunk.value = ''
-          addProgressLog(`LLM 返回内容:\n${fullContent}`, 'info')
-        } else {
-          addProgressLog(`LLM 调用结束(未返回内容)`, 'warning')
-        }
-        return
-      }
-
-      case 'llm_error':
-        addProgressLog(`LLM 调用失败: ${data.payload || '未知错误'}`, 'error')
-        reviewStreamingChunk.value = ''
-        return
-
-      case 'done':
-        // 评审完成,等待后续 final 事件推送最终详情
-        return
-
-      case 'error':
-        addProgressLog(`评审错误: ${data.payload || '未知错误'}`, 'error')
-        reviewCurrentStatus.value = 'error'
-        reviewCurrentStep.value = `${label} · 出错`
-        reviewStreamingChunk.value = ''
-        stopSSEStream()
-        return
-
-      case 'final': {
-        // 终态评审详情(来自 SSE 端点的 _serialize_review_for_sse)
-        if (data.result === 'pending') {
-          reviewCurrentStatus.value = 'running'
-          reviewCurrentStep.value = `${label} · 第 ${data.review_round} 轮`
-          if (stepKey !== lastLoggedStepKey) {
-            lastLoggedStepKey = stepKey
-            addProgressLog(`[${reviewCurrentStep.value}] SSE:LLM 正在分析...`, 'info')
-          }
-        } else if (data.result === 'passed') {
-          reviewCurrentStatus.value = 'passed'
-          reviewCurrentStep.value = `${label} · 已通过`
-          addProgressLog(`SSE:评审通过!总分:${data.total_score ?? '—'}`, 'success')
-          if (data.conclusion) addProgressLog(`结论:${data.conclusion}`, 'info')
-        } else if (data.result === 'failed') {
-          reviewCurrentStatus.value = 'failed'
-          reviewCurrentStep.value = `${label} · 未通过`
-          addProgressLog(`SSE:评审未通过,总分:${data.total_score ?? '—'}`, 'warning')
-          if (data.suggestions) addProgressLog(`建议:${data.suggestions}`, 'info')
-        } else if (data.result === 'error') {
-          reviewCurrentStatus.value = 'error'
-          reviewCurrentStep.value = `${label} · 出错`
-          addProgressLog(`SSE:评审出错,请查看评审记录`, 'error')
-        }
-        reviewStreamingChunk.value = ''
-        stopSSEStream()
-        return
-      }
-
-      default:
-        // 未知事件类型,忽略
-        return
-    }
-
-    // 兼容旧版 data.error 字段
     if (data.error) {
       addProgressLog(`SSE 错误:${data.error}`, 'error')
+      stopSSEStream()
+      return
+    }
+    const label = reviewTypeLabel(data.review_type as ReviewType) || data.review_type
+    const stepKey = `${data.review_type}|${data.review_round}|${data.result}`
+    if (data.result === 'pending') {
+      reviewCurrentStatus.value = 'running'
+      reviewCurrentStep.value = `${label} · 第 ${data.review_round} 轮`
+      if (stepKey !== lastLoggedStepKey) {
+        lastLoggedStepKey = stepKey
+        addProgressLog(`[${reviewCurrentStep.value}] SSE:LLM 正在分析...`, 'info')
+      }
+    } else if (data.result === 'passed') {
+      reviewCurrentStatus.value = 'passed'
+      reviewCurrentStep.value = `${label} · 已通过`
+      addProgressLog(`SSE:评审通过!总分:${data.total_score ?? '—'}`, 'success')
+      if (data.conclusion) addProgressLog(`结论:${data.conclusion}`, 'info')
+      stopSSEStream()
+    } else if (data.result === 'failed') {
+      reviewCurrentStatus.value = 'failed'
+      reviewCurrentStep.value = `${label} · 未通过`
+      addProgressLog(`SSE:评审未通过,总分:${data.total_score ?? '—'}`, 'warning')
+      if (data.suggestions) addProgressLog(`建议:${data.suggestions}`, 'info')
+      stopSSEStream()
+    } else if (data.result === 'error') {
+      reviewCurrentStatus.value = 'error'
+      reviewCurrentStep.value = `${label} · 出错`
+      addProgressLog(`SSE:评审出错,请查看评审记录`, 'error')
       stopSSEStream()
     }
   }
@@ -396,9 +317,6 @@ function openReviewDrawer() {
   reviewElapsedSec.value = 0
   reviewLastLogAt.value = null
   lastLoggedStepKey = ''
-  // 重置 LLM 流式输出状态
-  reviewStreamingChunk.value = ''
-  reviewReceivedFirstChunk.value = false
   addProgressLog('开始触发 LLM 评审...', 'info')
   startElapsedTimer()
   startHeartbeat()
@@ -1110,6 +1028,132 @@ const step5Status = computed<StepStatus>(() => {
   return 'not_started'
 })
 
+// 优化2: 状态引导提示 - 根据当前状态返回下一步该谁做什么
+const nextStepHint = computed<{ actor: string; action: string; type: 'info' | 'warning' | 'success' }>(() => {
+  const status = release.value?.status
+  if (!status) return { actor: '', action: '', type: 'info' }
+  const hintMap: Record<string, { actor: string; action: string; type: 'info' | 'warning' | 'success' }> = {
+    draft: { actor: '开发人员', action: '上传代码包', type: 'info' },
+    code_pending_review: { actor: '项目经理', action: '触发代码评审', type: 'info' },
+    test_pending_review: { actor: '测试人员', action: '上传测试报告', type: 'info' },
+    expert_pending_review: { actor: '专家', action: '上传专家评审报告', type: 'info' },
+    pending_confirm: { actor: '项目经理', action: '确认释放', type: 'warning' },
+    released: { actor: '-', action: '版本已释放', type: 'success' },
+    review_failed: { actor: '项目经理', action: '评审未通过，可特批放行或等待重新上传', type: 'warning' },
+  }
+  return hintMap[status] || { actor: '', action: '', type: 'info' }
+})
+
+// 优化4: 下载模板 - 生成并下载对应类型(代码包/测试报告/专家评审报告)的模板文件
+function downloadTemplate(type: 'code' | 'test' | 'expert') {
+  const r = release.value
+  if (!r) return
+  // 公共变量替换:项目名、版本号、用户名、日期
+  const projectNameStr = projectName.value || r.project_id || '未知项目'
+  const versionStr = r.version_id || ''
+  const userStr = authStore.user?.full_name || authStore.user?.username || '当前用户'
+  const now = new Date()
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+
+  let content = ''
+  let ext = 'txt'
+  if (type === 'code') {
+    ext = 'py'
+    content = `# BMS 模块代码模板
+# 项目: ${projectNameStr}
+# 版本: ${versionStr}
+# 开发人员: ${userStr}
+# 日期: ${dateStr}
+
+class BMSCore:
+    """BMS 核心算法"""
+
+    def __init__(self):
+        self.soc = 0.0
+        self.capacity = 100.0
+
+    def update_soc(self, current_ma: float, time_hours: float) -> float:
+        """更新 SOC (State of Charge)
+
+        Args:
+            current_ma: 电流 (mA), 正为放电, 负为充电
+            time_hours: 时间 (小时)
+
+        Returns:
+            更新后的 SOC 百分比
+        """
+        delta = (current_ma * time_hours) / (self.capacity * 1000) * 100
+        self.soc = max(0, min(100, self.soc - delta))
+        return self.soc
+`
+  } else if (type === 'test') {
+    ext = 'md'
+    content = `# 测试报告
+## 项目信息
+- 项目: ${projectNameStr}
+- 版本: ${versionStr}
+- 测试人员: ${userStr}
+- 日期: ${dateStr}
+
+## 测试范围
+<!-- 列出本次测试覆盖的功能模块 -->
+
+## 测试用例
+| 编号 | 测试项 | 预期结果 | 实际结果 | 结论 |
+|------|--------|---------|---------|------|
+| TC-001 | SOC 计算 | 0-100范围 | | |
+
+## 测试结果
+- 单元测试:
+- 集成测试:
+- 边界测试:
+
+## 结论
+<!-- 通过/不通过 -->
+`
+  } else if (type === 'expert') {
+    ext = 'md'
+    content = `# 专家评审报告
+## 评审信息
+- 项目: ${projectNameStr}
+- 版本: ${versionStr}
+- 评审专家: ${userStr}
+- 日期: ${dateStr}
+
+## 评审范围
+<!-- 列出本次评审的范围 -->
+
+## 评审维度
+| 维度 | 评分(0-100) | 说明 |
+|------|------------|------|
+| 代码质量 | | |
+| 安全性 | | |
+| 合规性 | | |
+| 性能 | | |
+
+## 风险点
+<!-- 列出发现的风险 -->
+
+## 评审结论
+<!-- 通过/不通过/有条件通过 -->
+`
+  }
+
+  // 用 Blob + URL.createObjectURL + a.click() 触发浏览器下载
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `template_${type}_${ts}.${ext}`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  ElMessage.success('模板已下载')
+}
+
 onMounted(async () => {
   await loadRelease()
   await loadReviews()
@@ -1180,6 +1224,26 @@ onMounted(async () => {
         </el-alert>
 
         <div class="pipeline">
+          <!-- 优化2: 状态引导提示横幅 - 告诉用户当前状态该谁做什么 -->
+          <el-alert
+            v-if="nextStepHint.action"
+            :type="nextStepHint.type"
+            :closable="false"
+            show-icon
+            class="next-step-hint"
+            style="margin-bottom:12px"
+          >
+            <template #title>
+              <span>下一步：</span>
+              <el-tag
+                :type="nextStepHint.type === 'success' ? 'success' : nextStepHint.type === 'warning' ? 'warning' : 'info'"
+                size="small"
+                effect="light"
+                style="margin: 0 6px"
+              >{{ nextStepHint.actor }}</el-tag>
+              <span>{{ nextStepHint.action }}</span>
+            </template>
+          </el-alert>
           <!-- 步骤 1:版本创建 -->
           <!-- 功能7:特批放行横幅(评审失败被特批放行后展示) -->
           <el-alert
@@ -1299,6 +1363,10 @@ onMounted(async () => {
                   <el-button type="primary" size="small" :loading="codeUploading" @click="doUploadCode">
                     {{ canReuploadAtStep('code_review') ? '重新上传代码包' : '上传代码包' }}
                   </el-button>
+                  <!-- 优化4: 代码包模板下载 -->
+                  <el-button text size="small" @click="downloadTemplate('code')">
+                    <el-icon><Download /></el-icon>下载模板
+                  </el-button>
                   <!-- 代码包上传进度条 -->
                   <el-progress
                     v-if="codeUploadProgress > 0 && codeUploadProgress < 100"
@@ -1383,6 +1451,10 @@ onMounted(async () => {
                   <el-button type="primary" size="small" :loading="testUploading" @click="doUploadTest">
                     {{ canReuploadAtStep('test_report_review') ? '重新上传测试报告' : '上传测试报告' }}
                   </el-button>
+                  <!-- 优化4: 测试报告模板下载 -->
+                  <el-button text size="small" @click="downloadTemplate('test')">
+                    <el-icon><Download /></el-icon>下载模板
+                  </el-button>
                   <!-- 测试报告上传进度条 -->
                   <el-progress
                     v-if="testUploadProgress > 0 && testUploadProgress < 100"
@@ -1466,6 +1538,10 @@ onMounted(async () => {
                   </el-upload>
                   <el-button type="primary" size="small" :loading="reviewUploading" @click="doUploadReviewReport">
                     {{ canReuploadAtStep('expert_report_review') ? '重新上传评审报告' : '上传评审报告' }}
+                  </el-button>
+                  <!-- 优化4: 专家评审报告模板下载 -->
+                  <el-button text size="small" @click="downloadTemplate('expert')">
+                    <el-icon><Download /></el-icon>下载模板
                   </el-button>
                   <!-- 评审报告上传进度条 -->
                   <el-progress
@@ -1876,11 +1952,8 @@ onMounted(async () => {
                 <div class="elapsed-value">{{ formatElapsed(reviewElapsedSec) }}</div>
               </div>
             </div>
-            <div class="step-hint" v-if="reviewCurrentStatus === 'running' && !reviewReceivedFirstChunk">
-              正在调用大模型,请耐心等待... 通常需要 30 秒 ~ 2 分钟
-            </div>
-            <div class="step-hint" v-else-if="reviewCurrentStatus === 'running' && reviewReceivedFirstChunk">
-              LLM 正在返回内容,实时输出已显示在下方日志区
+            <div class="step-hint" v-if="reviewCurrentStatus === 'running'">
+              大模型正在分析中,请耐心等待... 通常需要 30 秒 ~ 2 分钟
             </div>
             <div class="step-hint" v-else-if="reviewCurrentStatus === 'triggering'">
               正在提交评审请求...
@@ -1916,14 +1989,9 @@ onMounted(async () => {
             <div v-if="reviewProgressLogs.length === 0" class="log-empty">
               暂无评审进度日志
             </div>
-            <div v-if="(reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering') && !reviewReceivedFirstChunk" class="log-pending">
+            <div v-if="reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering'" class="log-pending">
               <span class="log-dot">·</span>
               <span>等待 LLM 返回<span class="loading-dots"><span>.</span><span>.</span><span>.</span></span></span>
-            </div>
-            <div v-if="(reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering') && reviewReceivedFirstChunk" class="log-streaming">
-              <span class="log-dot">·</span>
-              <span class="streaming-label">LLM 实时返回:</span>
-              <pre class="streaming-content">{{ reviewStreamingChunk }}<span class="streaming-cursor">▍</span></pre>
             </div>
           </div>
         </div>
@@ -2304,6 +2372,12 @@ onMounted(async () => {
   flex-direction: column;
   gap: 0;
 }
+/* 优化2: 状态引导提示横幅样式(圆角卡片式,一行文字) */
+.next-step-hint {
+  border-radius: 8px;
+  padding: 8px 14px;
+  align-items: center;
+}
 .step-box {
   border: 1px solid #e4e7ed;
   border-left: 4px solid #c0c4cc;
@@ -2388,50 +2462,6 @@ onMounted(async () => {
 .timeline-label {
   color: #909399;
   margin-right: 4px;
-}
-
-
-/* LLM 流式输出区域样式 */
-.log-streaming {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px 8px;
-  background: #f5f7fa;
-  border-radius: 4px;
-  font-size: 12px;
-  color: #909399;
-}
-.log-streaming .log-dot {
-  color: #67c23a;
-  font-weight: bold;
-  animation: blink 1s infinite;
-}
-.log-streaming .streaming-label {
-  flex-shrink: 0;
-  color: #67c23a;
-  font-weight: 500;
-}
-.log-streaming .streaming-content {
-  margin: 0;
-  flex: 1;
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #606266;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 400px;
-  overflow-y: auto;
-}
-.log-streaming .streaming-cursor {
-  display: inline-block;
-  color: #409eff;
-  animation: blink 0.8s infinite;
-}
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
 }
 
 </style>

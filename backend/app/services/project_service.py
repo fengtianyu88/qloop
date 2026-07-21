@@ -16,6 +16,8 @@ from app.models.project import (
     Version,
 )
 from app.schemas.project import ProjectCreate, ProjectMemberCreate, ProjectMemberUpdate, VersionCreate
+from app.models.notification import NotificationType
+from app.services.notification_service import create_notification
 
 
 async def create_project(
@@ -246,6 +248,7 @@ async def create_version(
         status=ReleaseStatus.DRAFT,
     )
     db.add(release)
+    await db.flush()  # 刷新以获取 release.id,用于通知 link_url
 
     # 自动把 developer/tester/expert 加入 ProjectMember(如果尚未存在)
     # 这样他们登录后才能访问项目和 release
@@ -272,8 +275,42 @@ async def create_version(
                 project_role=role,
             ))
 
+    # 提前捕获 release_id,避免 commit 后 expire_on_commit 导致访问失败
+    release_id_for_notify = release.id
     await db.commit()
     await db.refresh(version)
+
+    # 通知被分配的 developer/tester/expert(通知系统)
+    # PM 自己不需要通知(他是创建者);user_id 为 None 时跳过
+    try:
+        project_result = await db.execute(
+            select(Project).where(Project.id == project_id)
+        )
+        project = project_result.scalar_one_or_none()
+        project_name = project.name if project is not None else ""
+        pm_user_id = project.pm_user_id if project is not None else None
+        link_url = f"/releases/{release_id_for_notify}"
+        version_no = version.version_number
+        # 各角色任务通知:(user_id, 通知类型, 标题, 内容)
+        role_notifications = [
+            (version.developer_id, NotificationType.TASK_ASSIGNED,
+             "你有新的代码上传任务",
+             f"{project_name} {version_no} 需要你上传代码包"),
+            (version.tester_id, NotificationType.TASK_ASSIGNED,
+             "你有新的测试任务",
+             f"{project_name} {version_no} 等待代码评审通过后需要你上传测试报告"),
+            (version.expert_id, NotificationType.TASK_ASSIGNED,
+             "你有新的评审任务",
+             f"{project_name} {version_no} 等待测试报告评审通过后需要你上传专家评审报告"),
+        ]
+        for uid, ntype, title, content_text in role_notifications:
+            if uid is None or uid == pm_user_id:
+                continue
+            await create_notification(db, uid, ntype, title, content_text, link_url)
+    except Exception:
+        # 通知失败不影响版本创建主流程
+        pass
+
     return version
 
 

@@ -12,12 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.project import ExternalRecipient, Release, ReleaseStatus
+from app.models.project import ExternalRecipient, Project, Release, ReleaseStatus, Version
 from app.storage.minio_client import (
     minio_delete_object,
     minio_generate_presigned_url,
     minio_upload_file,
 )
+from app.models.notification import NotificationType
+from app.services.notification_service import create_notification
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +136,33 @@ async def get_release_by_id(
     return result.scalar_one_or_none()
 
 
+async def _get_version_project_for_notify(
+    db: AsyncSession, version_id: uuid.UUID
+) -> Optional[tuple]:
+    """查询版本的版本号、各角色 user_id 和 PM user_id(用于通知)。
+
+    返回 (version_number, developer_id, tester_id, expert_id, pm_user_id),
+    若版本不存在返回 None。commit 之后 release.version 关系可能已过期,
+    因此单独查询避免 async 懒加载错误。
+    """
+    result = await db.execute(
+        select(Version, Project.pm_user_id)
+        .join(Project, Project.id == Version.project_id)
+        .where(Version.id == version_id)
+    )
+    row = result.first()
+    if row is None:
+        return None
+    ver, pm_user_id = row
+    return (
+        ver.version_number,
+        ver.developer_id,
+        ver.tester_id,
+        ver.expert_id,
+        pm_user_id,
+    )
+
+
 async def upload_code_package(
     db: AsyncSession,
     release_id: uuid.UUID,
@@ -183,6 +212,23 @@ async def upload_code_package(
 
     await db.commit()
     await db.refresh(release)
+
+    # 通知 PM:代码包已上传,请触发代码评审
+    try:
+        info = await _get_version_project_for_notify(db, release.version_id)
+        if info is not None:
+            version_no, _dev, _tester, _expert, pm_uid = info
+            if pm_uid is not None:
+                await create_notification(
+                    db, pm_uid, NotificationType.YOUR_TURN,
+                    "代码包已上传",
+                    f"{version_no} 代码包已上传，请触发代码评审",
+                    f"/releases/{release.id}",
+                )
+    except Exception:
+        # 通知失败不影响主流程
+        pass
+
     return release
 
 
@@ -231,6 +277,23 @@ async def upload_test_report(
 
     await db.commit()
     await db.refresh(release)
+
+    # 通知 PM:测试报告已上传,请触发测试报告评审
+    try:
+        info = await _get_version_project_for_notify(db, release.version_id)
+        if info is not None:
+            version_no, _dev, _tester, _expert, pm_uid = info
+            if pm_uid is not None:
+                await create_notification(
+                    db, pm_uid, NotificationType.YOUR_TURN,
+                    "测试报告已上传",
+                    f"{version_no} 测试报告已上传，请触发测试报告评审",
+                    f"/releases/{release.id}",
+                )
+    except Exception:
+        # 通知失败不影响主流程
+        pass
+
     return release
 
 
@@ -279,6 +342,23 @@ async def upload_review_report(
 
     await db.commit()
     await db.refresh(release)
+
+    # 通知 PM:专家评审报告已上传,请触发专家报告评审
+    try:
+        info = await _get_version_project_for_notify(db, release.version_id)
+        if info is not None:
+            version_no, _dev, _tester, _expert, pm_uid = info
+            if pm_uid is not None:
+                await create_notification(
+                    db, pm_uid, NotificationType.YOUR_TURN,
+                    "专家评审报告已上传",
+                    f"{version_no} 专家评审报告已上传，请触发专家报告评审",
+                    f"/releases/{release.id}",
+                )
+    except Exception:
+        # 通知失败不影响主流程
+        pass
+
     return release
 
 
@@ -363,6 +443,26 @@ async def confirm_release(
 
     await db.commit()
     await db.refresh(release)
+
+    # 通知所有相关人员(developer/tester/expert/PM):版本已释放
+    try:
+        info = await _get_version_project_for_notify(db, release.version_id)
+        if info is not None:
+            version_no, dev_id, tester_id, expert_id, pm_uid = info
+            link_url = f"/releases/{release.id}"
+            for uid in (dev_id, tester_id, expert_id, pm_uid):
+                if uid is None:
+                    continue
+                await create_notification(
+                    db, uid, NotificationType.RELEASE_COMPLETED,
+                    "版本已释放",
+                    f"{version_no} 已成功释放",
+                    link_url,
+                )
+    except Exception:
+        # 通知失败不影响主流程
+        pass
+
     return release
 
 
@@ -600,6 +700,25 @@ async def force_advance(
             release.force_advanced_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(release)
+        # 通知下一角色:已特批放行
+        try:
+            info = await _get_version_project_for_notify(db, release.version_id)
+            if info is not None:
+                version_no, dev_id, tester_id, expert_id, pm_uid = info
+                next_role_user = {
+                    ReleaseStatus.TEST_PENDING_REVIEW: tester_id,
+                    ReleaseStatus.EXPERT_PENDING_REVIEW: expert_id,
+                    ReleaseStatus.PENDING_CONFIRM: pm_uid,
+                }.get(next_status)
+                if next_role_user is not None:
+                    await create_notification(
+                        db, next_role_user, NotificationType.YOUR_TURN,
+                        "已特批放行",
+                        f"{version_no} 已特批放行到下一阶段",
+                        f"/releases/{release.id}",
+                    )
+        except Exception:
+            pass
         return release
 
     if release.status == ReleaseStatus.PENDING_CONFIRM:
@@ -665,5 +784,24 @@ async def force_advance(
         release.force_advanced_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(release)
+    # 通知下一角色:已特批放行
+    try:
+        info = await _get_version_project_for_notify(db, release.version_id)
+        if info is not None:
+            version_no, dev_id, tester_id, expert_id, pm_uid = info
+            next_role_user = {
+                ReleaseStatus.TEST_PENDING_REVIEW: tester_id,
+                ReleaseStatus.EXPERT_PENDING_REVIEW: expert_id,
+                ReleaseStatus.PENDING_CONFIRM: pm_uid,
+            }.get(next_status)
+            if next_role_user is not None:
+                await create_notification(
+                    db, next_role_user, NotificationType.YOUR_TURN,
+                    "已特批放行",
+                    f"{version_no} 已特批放行到下一阶段",
+                    f"/releases/{release.id}",
+                )
+    except Exception:
+        pass
     return release
 
