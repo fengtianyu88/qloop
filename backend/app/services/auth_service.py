@@ -214,7 +214,7 @@ async def reset_password(
 # 登录失败次数上限,达到后锁定账号
 LOGIN_FAIL_LIMIT = 5
 # 锁定时长(分钟)
-LOGIN_LOCK_MINUTES = 15
+LOGIN_LOCK_MINUTES = 3
 
 
 async def check_login_lock(redis, ip: str, username: str) -> tuple[bool, str]:
