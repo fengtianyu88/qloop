@@ -33,6 +33,8 @@ const releaseId = computed(() => route.params.id as string)
 const release = ref<Release | null>(null)
 // P2-9: 面包屑用,展示所属项目名称(按需懒加载)
 const projectName = ref<string>('')
+// 功能7: 缓存项目 PM 用户 ID,用于 canForceAdvance 判断当前用户是否为该项目 PM
+const projectPmUserId = ref<string>('')
 const reviews = ref<LLMReview[]>([])
 const loading = ref(false)
 // 功能2.4: 外部接收方下载链接(含 access_token)
@@ -675,9 +677,12 @@ async function loadRelease() {
       try {
         const project = await getProject(release.value.project_id)
         projectName.value = project?.name || ''
+        // 功能7: 缓存 PM 用户 ID,用于 canForceAdvance 判断
+        projectPmUserId.value = project?.pm_user_id || ''
       } catch {
         // 项目名称加载失败不阻塞主流程
         projectName.value = ''
+        projectPmUserId.value = ''
       }
     }
     // 已释放时加载外部接收方下载链接(功能2.4)
@@ -862,14 +867,26 @@ const canSkipReview = computed(() => {
   return false
 })
 
-// 是否可以特批放行(PM 或 admin) - 简化:仅 admin/super_admin 可见
+// 是否可以特批放行(功能7):
+// - admin/super_admin:任意评审阶段 + pending_confirm + review_failed 都可见
+// - PM:任意评审阶段 + pending_confirm + review_failed 都可见
+// - 其他角色:不可见
 const canForceAdvance = computed(() => {
   if (!release.value || !authStore.user) return false
   const status = release.value.status
-  const allowedStages = ['code_pending_review', 'test_pending_review', 'expert_pending_review', 'pending_confirm']
+  // 允许特批放行的状态:任意评审阶段、待确认、评审失败
+  const allowedStages = [
+    'code_pending_review',
+    'test_pending_review',
+    'expert_pending_review',
+    'pending_confirm',
+    'review_failed',  // 功能7:评审失败后 PM/管理员可特批放行到下一阶段
+  ]
   if (!allowedStages.includes(status)) return false
   if (authStore.isAdmin) return true
-  // PM 走原有的确认释放按钮;此处仅 admin/super_admin 可见特批放行
+  // PM:当前用户是该项目的 PM
+  const userId = authStore.user.id
+  if (projectPmUserId.value && projectPmUserId.value === userId) return true
   return false
 })
 
@@ -900,10 +917,20 @@ async function handleSkipReview() {
 async function handleForceAdvance() {
   if (!release.value) return
   try {
+    // 功能7:根据当前状态显示不同提示
+    const curStatus = release.value.status
+    let actionDesc = '直接释放版本'
+    if (curStatus === 'review_failed') {
+      actionDesc = '推进到下一阶段(根据失败阶段决定)'
+    } else if (curStatus === 'pending_confirm') {
+      actionDesc = '直接释放版本'
+    } else {
+      actionDesc = '跳过当前 LLM 评审,推进到下一阶段'
+    }
     await ElMessageBox.confirm(
-      '将跳过剩余所有 LLM 评审,直接释放版本。\n\n' +
+      '将特批放行:' + actionDesc + '。\n\n' +
       '此操作需要 PM 或管理员权限,且会记录在审计日志中。\n' +
-      '释放后版本不可撤销。',
+      '评审失败状态下放行将记录特批放行人。',
       '特批放行',
       {
         type: 'warning',
@@ -1072,6 +1099,43 @@ onMounted(async () => {
 
         <div class="pipeline">
           <!-- 步骤 1:版本创建 -->
+          <!-- 功能7:特批放行横幅(评审失败被特批放行后展示) -->
+          <el-alert
+            v-if="release.force_advanced_by_name"
+            type="warning"
+            :closable="false"
+            show-icon
+            style="margin-bottom:12px"
+          >
+            <template #title>
+              本释放已由 <b>{{ release.force_advanced_by_name }}</b>
+              于 {{ formatTime(release.force_advanced_at) }} 特批放行
+              <span v-if="isFailed">(当前状态:评审失败)</span>
+            </template>
+          </el-alert>
+          <!-- 功能7:评审失败时,显示特批放行按钮(仅 PM/管理员可见) -->
+          <el-alert
+            v-if="isFailed && canForceAdvance"
+            type="error"
+            :closable="false"
+            show-icon
+            style="margin-bottom:12px"
+          >
+            <template #title>
+              评审失败 - PM/管理员可特批放行推进到下一阶段
+            </template>
+            <template #default>
+              <el-button
+                type="danger"
+                size="small"
+                style="margin-top:8px"
+                @click="handleForceAdvance"
+              >
+                <el-icon><Promotion /></el-icon>立即特批放行
+              </el-button>
+            </template>
+          </el-alert>
+
           <div :class="['step-box', step1Status]">
             <div class="step-header">
               <span class="step-number">1</span>
@@ -1367,6 +1431,14 @@ onMounted(async () => {
                   <span v-else class="mono-id">{{ release.confirmed_by || '—' }}</span>
                 </div>
                 <div><span class="label">确认时间:</span>{{ formatTime(release.confirmed_at) }}</div>
+                <!-- 功能7:特批放行人展示 -->
+                <div v-if="release.force_advanced_by_name" class="force-advance-info">
+                  <span class="label">特批放行人:</span>
+                  <el-tag type="warning" size="small" effect="plain">
+                    <el-icon style="margin-right:4px"><Promotion /></el-icon>{{ release.force_advanced_by_name }}
+                  </el-tag>
+                  <span style="margin-left:8px;color:#909399">{{ formatTime(release.force_advanced_at) }}</span>
+                </div>
               </div>
               <div class="step-actions">
                 <template v-if="release.status === 'pending_confirm'">
@@ -1771,6 +1843,13 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.force-advance-info {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: #fdf6ec;
+  border-left: 3px solid #e6a23c;
+  border-radius: 2px;
+}
 .release-breadcrumb {
   margin-bottom: 12px;
   font-size: 13px;

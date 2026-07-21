@@ -244,6 +244,13 @@ class Release(Base):
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 特批放行人(评审失败时 PM/管理员强制推进到下一阶段,功能7)
+    force_advanced_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    force_advanced_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -260,6 +267,9 @@ class Release(Base):
     )
     confirmer: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[confirmed_by]
+    )
+    force_advancer: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[force_advanced_by]
     )
     code_package_uploader: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[code_package_uploaded_by]

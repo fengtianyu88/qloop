@@ -41,6 +41,8 @@ class MyTaskItem(BaseModel):
     updated_at: Optional[datetime] = None
     # Role of the current user on this release
     my_role: Optional[str] = None
+    # 操作类型说明(功能7.1):根据角色+状态生成的中文待办文案
+    todo_type: Optional[str] = None
     # Names for display
     developer_name: Optional[str] = None
     tester_name: Optional[str] = None
@@ -57,13 +59,103 @@ class MyTaskPage(BaseModel):
     page_size: int
 
 
+# 待办状态集合(功能7.1):
+# - DRAFT: 开发上传代码包
+# - CODE_PENDING_REVIEW / TEST_PENDING_REVIEW / EXPERT_PENDING_REVIEW:
+#   等待 LLM 评审完成(各角色等待)
+# - PENDING_CONFIRM: PM 确认释放
+# - REVIEW_FAILED: 评审失败,对应角色重新上传;PM 可特批放行
 TODO_STATUSES = [
+    ReleaseStatus.DRAFT,
     ReleaseStatus.CODE_PENDING_REVIEW,
     ReleaseStatus.TEST_PENDING_REVIEW,
     ReleaseStatus.EXPERT_PENDING_REVIEW,
     ReleaseStatus.PENDING_CONFIRM,
     ReleaseStatus.REVIEW_FAILED,
 ]
+
+
+def _build_role_status_filter(
+    user: User,
+    latest_failed_subq,
+):
+    """构造角色↔状态严格匹配的过滤条件(功能7.1)。
+
+    - 开发: DRAFT(上传代码包), REVIEW_FAILED + CODE_REVIEW 失败(重新上传代码包)
+    - 测试: TEST_PENDING_REVIEW(上传测试报告),
+            REVIEW_FAILED + TEST_REPORT_REVIEW 失败(重新上传测试报告)
+    - 专家: EXPERT_PENDING_REVIEW(上传评审报告),
+            REVIEW_FAILED + EXPERT_REPORT_REVIEW 失败(重新上传评审报告)
+    - PM:   PENDING_CONFIRM(确认释放), REVIEW_FAILED(特批放行,任意失败类型)
+    """
+    from app.models.review import ReviewType
+
+    developer_clause = and_(
+        Version.developer_id == user.id,
+        or_(
+            Release.status == ReleaseStatus.DRAFT,
+            and_(
+                Release.status == ReleaseStatus.REVIEW_FAILED,
+                latest_failed_subq.c.failed_review_type == ReviewType.CODE_REVIEW,
+            ),
+        ),
+    )
+    tester_clause = and_(
+        Version.tester_id == user.id,
+        or_(
+            Release.status == ReleaseStatus.TEST_PENDING_REVIEW,
+            and_(
+                Release.status == ReleaseStatus.REVIEW_FAILED,
+                latest_failed_subq.c.failed_review_type == ReviewType.TEST_REPORT_REVIEW,
+            ),
+        ),
+    )
+    expert_clause = and_(
+        Version.expert_id == user.id,
+        or_(
+            Release.status == ReleaseStatus.EXPERT_PENDING_REVIEW,
+            and_(
+                Release.status == ReleaseStatus.REVIEW_FAILED,
+                latest_failed_subq.c.failed_review_type == ReviewType.EXPERT_REPORT_REVIEW,
+            ),
+        ),
+    )
+    pm_clause = and_(
+        Project.pm_user_id == user.id,
+        or_(
+            Release.status == ReleaseStatus.PENDING_CONFIRM,
+            Release.status == ReleaseStatus.REVIEW_FAILED,
+        ),
+    )
+    return or_(developer_clause, tester_clause, expert_clause, pm_clause)
+
+
+def _build_todo_type(
+    status: ReleaseStatus,
+    role: str,
+    failed_review_type: Optional[str],
+) -> Optional[str]:
+    """根据 status + role + 失败 review 类型生成中文待办文案(功能7.1)。"""
+    from app.models.review import ReviewType
+
+    if status == ReleaseStatus.DRAFT and role == "开发":
+        return "上传代码包"
+    if status == ReleaseStatus.TEST_PENDING_REVIEW and role == "测试":
+        return "上传测试报告"
+    if status == ReleaseStatus.EXPERT_PENDING_REVIEW and role == "专家":
+        return "上传评审报告"
+    if status == ReleaseStatus.PENDING_CONFIRM and role == "PM":
+        return "确认释放"
+    if status == ReleaseStatus.REVIEW_FAILED:
+        if role == "PM":
+            return "特批放行"
+        if role == "开发" and failed_review_type == ReviewType.CODE_REVIEW:
+            return "重新上传代码包"
+        if role == "测试" and failed_review_type == ReviewType.TEST_REPORT_REVIEW:
+            return "重新上传测试报告"
+        if role == "专家" and failed_review_type == ReviewType.EXPERT_REPORT_REVIEW:
+            return "重新上传评审报告"
+    return None
 
 
 async def _build_task_list(
@@ -75,25 +167,36 @@ async def _build_task_list(
 ) -> tuple[List[MyTaskItem], int]:
     """Build list of releases where user has a role and status is in `statuses`.
 
+    功能7.1:角色↔状态严格匹配过滤
+    - 开发只在 DRAFT / (REVIEW_FAILED + CODE_REVIEW) 看到待办
+    - 测试只在 TEST_PENDING_REVIEW / (REVIEW_FAILED + TEST_REPORT_REVIEW) 看到待办
+    - 专家只在 EXPERT_PENDING_REVIEW / (REVIEW_FAILED + EXPERT_REPORT_REVIEW) 看到待办
+    - PM 只在 PENDING_CONFIRM / REVIEW_FAILED 看到待办
+
     支持分页(P1-10):``offset`` / ``limit`` 控制分页范围,返回 ``(items, total)``。
     当 ``limit`` 为 ``None`` 时不限制返回条数(向后兼容)。
     """
-
-    # Join Release -> Version -> Project, and join users for names
     from app.models.project import Project, Version, Release
+    from app.models.review import LLMReview, ReviewResult
+    from sqlalchemy import true as sa_true
+
+    # LATERAL 子查询:每个 release 最近一次失败的 review_type(用于 REVIEW_FAILED 时判断角色)
+    latest_failed_subq = (
+        select(LLMReview.review_type.label("failed_review_type"))
+        .where(
+            LLMReview.release_id == Release.id,
+            LLMReview.result.in_([ReviewResult.FAILED, ReviewResult.ERROR]),
+        )
+        .order_by(LLMReview.created_at.desc())
+        .limit(1)
+        .lateral("latest_failed")
+    )
 
     # 公共过滤条件
     base_filters = (
-        Release.status.in_(statuses),
         Project.is_active == True,  # noqa: E712
-        # 排除软删除版本(P1-11)
         Version.is_deleted == False,  # noqa: E712
-        or_(
-            Version.developer_id == user.id,
-            Version.tester_id == user.id,
-            Version.expert_id == user.id,
-            Project.pm_user_id == user.id,
-        ),
+        _build_role_status_filter(user, latest_failed_subq),
     )
 
     # 1) 统计总数(分页用)
@@ -102,16 +205,18 @@ async def _build_task_list(
         .select_from(Release)
         .join(Version, Release.version_id == Version.id)
         .join(Project, Version.project_id == Project.id)
+        .outerjoin(latest_failed_subq, sa_true())
         .where(*base_filters)
     )
     total = (await db.execute(count_stmt)).scalar() or 0
 
     # 2) 主查询:按 Release.updated_at 倒序,应用分页
     stmt = (
-        select(Release, Version, Project)
+        select(Release, Version, Project, latest_failed_subq.c.failed_review_type)
         .select_from(Release)
         .join(Version, Release.version_id == Version.id)
         .join(Project, Version.project_id == Project.id)
+        .outerjoin(latest_failed_subq, sa_true())
         .where(*base_filters)
         .order_by(Release.updated_at.desc())
         .offset(offset)
@@ -123,7 +228,7 @@ async def _build_task_list(
 
     # Batch-load user names
     user_ids = set()
-    for rel, ver, proj in rows:
+    for rel, ver, proj, _failed_type in rows:
         if ver.developer_id:
             user_ids.add(ver.developer_id)
         if ver.tester_id:
@@ -140,7 +245,7 @@ async def _build_task_list(
             name_map[u.id] = u.full_name
 
     items = []
-    for rel, ver, proj in rows:
+    for rel, ver, proj, failed_type in rows:
         # Determine the user's role(s) on this release
         roles = []
         if proj.pm_user_id == user.id:
@@ -152,6 +257,14 @@ async def _build_task_list(
         if ver.expert_id == user.id:
             roles.append("专家")
         my_role = " / ".join(roles) if roles else None
+
+        # Generate todo_type per role (each role gets the one matching its status)
+        # If user has multiple roles on this release, pick the first matching one.
+        todo_type = None
+        for role in roles:
+            todo_type = _build_todo_type(rel.status, role, failed_type)
+            if todo_type is not None:
+                break
 
         items.append(
             MyTaskItem(
@@ -166,6 +279,7 @@ async def _build_task_list(
                 created_at=rel.created_at,
                 updated_at=rel.updated_at,
                 my_role=my_role,
+                todo_type=todo_type,
                 developer_name=name_map.get(ver.developer_id) if ver.developer_id else None,
                 tester_name=name_map.get(ver.tester_id) if ver.tester_id else None,
                 expert_name=name_map.get(ver.expert_id) if ver.expert_id else None,

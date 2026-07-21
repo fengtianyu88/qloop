@@ -149,6 +149,10 @@ class ReleaseResponse(BaseModel):
     confirmed_by: Optional[uuid.UUID] = None
     confirmed_at: Optional[datetime] = None
     confirmed_by_name: Optional[str] = None
+    # 特批放行人(功能7):PM/管理员在评审失败时强制推进的审计信息
+    force_advanced_by: Optional[uuid.UUID] = None
+    force_advanced_at: Optional[datetime] = None
+    force_advanced_by_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -183,6 +187,10 @@ class ReleaseListResponse(BaseModel):
     confirmed_by: Optional[uuid.UUID] = None
     confirmed_at: Optional[datetime] = None
     confirmed_by_name: Optional[str] = None
+    # 特批放行人(功能7)
+    force_advanced_by: Optional[uuid.UUID] = None
+    force_advanced_at: Optional[datetime] = None
+    force_advanced_by_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

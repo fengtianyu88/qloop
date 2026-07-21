@@ -533,13 +533,21 @@ async def skip_review(
 
 
 async def force_advance(
-    db: AsyncSession, release_id: uuid.UUID
+    db: AsyncSession, release_id: uuid.UUID, forced_by: Optional[uuid.UUID] = None
 ) -> Optional[Release]:
     """Force-advance a release to the next stage, bypassing reviews.
 
     - In review stages (code/test/expert pending_review): advance to next stage.
     - In pending_confirm: force-release (set status to RELEASED, generate download link).
+    - In review_failed: special-approval advance based on the failed review stage
+      (功能7 - PM/admin can override LLM review failures).
     - In draft: not allowed (must upload code package first).
+
+    Args:
+        db: Async database session.
+        release_id: Release ID.
+        forced_by: Optional user ID of the approver (PM/admin) who triggered
+            the force-advance. Recorded on the release for audit/display.
 
     Returns:
         The updated Release object, or None if not found.
@@ -554,13 +562,53 @@ async def force_advance(
         raise ValueError("Cannot force-advance a draft release (upload code package first)")
     if release.status == ReleaseStatus.RELEASED:
         raise ValueError("Release is already released")
+
+    # 功能7: REVIEW_FAILED 状态下,PM/管理员可特批放行,根据失败阶段决定推进目标
     if release.status == ReleaseStatus.REVIEW_FAILED:
-        raise ValueError("Cannot force-advance a failed release (re-upload artifact first)")
+        # 查询最近一次失败的 LLMReview,判断失败发生在哪个阶段
+        from app.models.review import LLMReview, ReviewResult, ReviewType
+        from sqlalchemy import select as _select
+
+        fail_stmt = (
+            _select(LLMReview)
+            .where(
+                LLMReview.release_id == release_id,
+                LLMReview.result.in_([ReviewResult.FAILED, ReviewResult.ERROR]),
+            )
+            .order_by(LLMReview.created_at.desc())
+            .limit(1)
+        )
+        failed_review = (await db.execute(fail_stmt)).scalars().first()
+
+        if failed_review is None:
+            # 没有失败的 review 记录,默认推进到下一阶段(保守:进入 pending_confirm)
+            next_status = ReleaseStatus.PENDING_CONFIRM
+        else:
+            # 根据失败的 review_type 决定推进目标
+            failed_type_to_next = {
+                ReviewType.CODE_REVIEW: ReleaseStatus.TEST_PENDING_REVIEW,
+                ReviewType.TEST_REPORT_REVIEW: ReleaseStatus.EXPERT_PENDING_REVIEW,
+                ReviewType.EXPERT_REPORT_REVIEW: ReleaseStatus.PENDING_CONFIRM,
+            }
+            next_status = failed_type_to_next.get(
+                failed_review.review_type, ReleaseStatus.PENDING_CONFIRM
+            )
+
+        release.status = next_status
+        if forced_by is not None:
+            release.force_advanced_by = forced_by
+            release.force_advanced_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(release)
+        return release
 
     if release.status == ReleaseStatus.PENDING_CONFIRM:
         # Force-release: same as confirm_release but bypassing checks
         release.status = ReleaseStatus.RELEASED
         release.confirmed_at = datetime.now(timezone.utc)
+        if forced_by is not None:
+            release.force_advanced_by = forced_by
+            release.force_advanced_at = datetime.now(timezone.utc)
         # Generate download link
         if release.code_package_path:
             try:
@@ -612,6 +660,9 @@ async def force_advance(
         )
 
     release.status = next_status
+    if forced_by is not None:
+        release.force_advanced_by = forced_by
+        release.force_advanced_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(release)
     return release

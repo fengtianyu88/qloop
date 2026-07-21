@@ -356,9 +356,17 @@ onMounted(() => {
             <el-table-column prop="project_name" label="项目" min-width="160" show-overflow-tooltip />
             <el-table-column prop="version_number" label="版本号" width="120" show-overflow-tooltip />
             <el-table-column prop="my_role" label="我的角色" width="100" />
-            <el-table-column prop="status" label="状态" width="150">
+            <!-- 功能7.1: 待办操作类型 -->
+            <el-table-column prop="todo_type" label="待办操作" width="140">
               <template #default="{ row }">
-                <el-tag size="small">{{ row.status }}</el-tag>
+                <el-tag v-if="row.todo_type" type="warning" size="small" effect="plain">{{ row.todo_type }}</el-tag>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
+            <!-- 功能7.1: 状态列改用国际化文案 -->
+            <el-table-column prop="status" label="状态" width="140">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.status as any)" size="small">{{ statusLabel(row.status as any) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="updated_at" label="更新时间" width="160">
@@ -383,6 +391,12 @@ onMounted(() => {
             <el-table-column prop="version_number" label="版本号" width="120" show-overflow-tooltip />
             <el-table-column prop="my_role" label="我的角色" width="100" />
             <el-table-column prop="release_number" label="释放号" width="80" />
+            <!-- 功能7.1: 已办状态用国际化文案(已释放) -->
+            <el-table-column prop="status" label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.status as any)" size="small">{{ statusLabel(row.status as any) }}</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="updated_at" label="释放时间" width="160">
               <template #default="{ row }">{{ row.updated_at?.replace('T', ' ').slice(0, 19) }}</template>
             </el-table-column>

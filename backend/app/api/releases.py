@@ -108,6 +108,7 @@ async def _enrich_release_response(
         response.test_report_uploaded_by,
         response.review_report_uploaded_by,
         response.confirmed_by,
+        response.force_advanced_by,
     }
     user_ids.discard(None)
     if not user_ids:
@@ -124,6 +125,8 @@ async def _enrich_release_response(
         response.review_report_uploader_name = users[response.review_report_uploaded_by].username
     if response.confirmed_by and response.confirmed_by in users:
         response.confirmed_by_name = users[response.confirmed_by].username
+    if response.force_advanced_by and response.force_advanced_by in users:
+        response.force_advanced_by_name = users[response.force_advanced_by].username
     return response
 
 @router.get(
@@ -723,7 +726,9 @@ async def force_advance_endpoint(
     - Project manager (PM) or admin/super_admin only.
     - In review stages: advance to next review stage.
     - In pending_confirm: force-release (set status to RELEASED).
-    - In draft/released/review_failed: not allowed (400).
+    - In review_failed: special-approval advance based on failed review stage
+      (功能7 - records force_advanced_by for audit/display).
+    - In draft/released: not allowed (400).
     """
     from app.models.user import SystemRole
 
@@ -742,7 +747,9 @@ async def force_advance_endpoint(
             )
 
     try:
-        updated = await force_advance(db=db, release_id=release_id)
+        updated = await force_advance(
+            db=db, release_id=release_id, forced_by=current_user.id
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

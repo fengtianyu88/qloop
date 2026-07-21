@@ -208,6 +208,10 @@ export interface Release {
   confirmed_by: string | null
   confirmed_at: string | null
   confirmed_by_name: string | null
+  // 特批放行人(功能7):PM/管理员在评审失败时强制推进的审计信息
+  force_advanced_by: string | null
+  force_advanced_at: string | null
+  force_advanced_by_name: string | null
   created_at: string
   updated_at: string
   // Associated project ID (populated via version join in _enrich_release_response)
