@@ -1,20 +1,72 @@
-"""Word / Excel document parsing helpers.
+"""Document parsing helpers for LLM review.
 
-These helpers turn an uploaded ``.docx`` or ``.xlsx`` file into plain text
-that can be embedded into an LLM review prompt. Only the modern
-Office Open XML formats (``.docx`` / ``.xlsx``) are supported; the legacy
-binary formats (``.doc`` / ``.xls``) return a descriptive message instead of
-raising, so the review engine can still produce a (failed) result.
+These helpers turn an uploaded artifact into plain text that can be
+embedded into an LLM review prompt. Supported formats:
+
+* ``.docx`` -> :func:`parse_docx` (via python-docx)
+* ``.xlsx`` -> :func:`parse_xlsx` (via openpyxl)
+* ``.zip`` -> :func:`parse_zip` (auto-extract and recursively parse inner
+  documents; supports nested .docx/.xlsx/.txt/.md/.csv/.json/.yaml)
+* ``.txt`` / ``.md`` / ``.csv`` / ``.json`` / ``.yaml`` / ``.ini`` /
+  ``.log`` / ``.rst`` -> decoded as text (tries utf-8 -> gbk -> latin-1)
+* ``.pdf`` -> descriptive message (not supported without pypdf)
+* ``.doc`` / ``.xls`` -> descriptive message (legacy binary formats)
+
+The legacy binary formats and any other extension return a descriptive
+message instead of raising, so the review engine can still produce a
+(failed) result.
 """
 
 from __future__ import annotations
 
 import io
 import os
-from typing import List
+import zipfile
+from typing import Dict, List
 
 from docx import Document
 from openpyxl import load_workbook
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+# Text file extensions that can be decoded directly.
+_TEXT_EXTENSIONS: frozenset = frozenset({
+    ".txt", ".md", ".markdown", ".csv", ".log", ".json",
+    ".yaml", ".yml", ".ini", ".cfg", ".rst", ".xml", ".html", ".htm",
+})
+
+# Extensions that ``parse_zip`` will attempt to parse inside an archive.
+_ZIP_PARSEABLE_EXTENSIONS: frozenset = frozenset({
+    ".docx", ".xlsx",
+}) | _TEXT_EXTENSIONS
+
+# Maximum number of files to parse inside a ZIP archive (DoS guard).
+_MAX_ZIP_ENTRIES = 50
+
+# Maximum total text length returned (LLM prompt guard).
+_MAX_TEXT_LENGTH = 100_000
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _truncate(text: str) -> str:
+    """Truncate text to a safe length for LLM prompts."""
+    if len(text) > _MAX_TEXT_LENGTH:
+        return text[:_MAX_TEXT_LENGTH] + "\n\n[... 内容已截断 ...]"
+    return text
+
+
+def _decode_text(file_data: bytes) -> str:
+    """Try common encodings in order; return the first successful decode."""
+    for encoding in ("utf-8-sig", "utf-8", "gbk", "gb18030", "latin-1"):
+        try:
+            return file_data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return "[无法解码文本文件，尝试的所有编码均失败]"
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +155,73 @@ def parse_xlsx(file_data: bytes) -> str:
 
 
 # ---------------------------------------------------------------------------
+# ZIP archive
+# ---------------------------------------------------------------------------
+def _extract_zip(file_data: bytes) -> Dict[str, bytes]:
+    """Extract a ZIP archive into ``{path: content}``.
+
+    Skips directories and macOS metadata entries. Capped at
+    ``_MAX_ZIP_ENTRIES`` to mitigate ZIP-bomb style inputs.
+    """
+    files: Dict[str, bytes] = {}
+    with zipfile.ZipFile(io.BytesIO(file_data)) as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            if "__MACOSX" in info.filename or os.path.basename(info.filename).startswith("._"):
+                continue
+            try:
+                files[info.filename] = zf.read(info)
+            except (RuntimeError, zipfile.BadZipFile, OSError):
+                continue
+            if len(files) >= _MAX_ZIP_ENTRIES:
+                break
+    return files
+
+
+def parse_zip(file_data: bytes) -> str:
+    """Extract a ZIP archive and parse all inner documents.
+
+    Each parseable file is rendered with a ``--- {path} ---`` header so the
+    LLM can attribute content to specific files. Non-parseable files are
+    listed but skipped (so the LLM still sees what was uploaded).
+
+    Args:
+        file_data: The raw bytes of a ``.zip`` archive.
+
+    Returns:
+        The concatenated plain text of all parseable inner files.
+    """
+    try:
+        files = _extract_zip(file_data)
+    except zipfile.BadZipFile as exc:
+        return f"[解压 ZIP 失败: {exc}]"
+    except Exception as exc:  # noqa: BLE001
+        return f"[读取 ZIP 失败: {exc}]"
+
+    if not files:
+        return "[ZIP 包内未找到任何可解析的文件]"
+
+    chunks: List[str] = []
+    for path, content in files.items():
+        ext = os.path.splitext(path)[1].lower()
+
+        if ext in _ZIP_PARSEABLE_EXTENSIONS:
+            inner_text = parse_document(content, path)
+            chunks.append(f"--- {path} ---")
+            chunks.append(inner_text)
+            chunks.append("")  # blank line separator
+        else:
+            # Surface the file name so the LLM knows it existed but was
+            # not parsed (e.g. .exe, .dll, .png).
+            chunks.append(f"--- {path} ---")
+            chunks.append(f"[跳过不支持的文件类型: {ext or '(无扩展名)'}]")
+            chunks.append("")
+
+    return _truncate("\n".join(chunks))
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 def parse_document(file_data: bytes, filename: str) -> str:
@@ -111,10 +230,13 @@ def parse_document(file_data: bytes, filename: str) -> str:
     Supported extensions:
         * ``.docx`` -> :func:`parse_docx`
         * ``.xlsx`` -> :func:`parse_xlsx`
+        * ``.zip`` -> :func:`parse_zip` (auto-extract + recursive parse)
+        * ``.txt`` / ``.md`` / ``.csv`` / ``.json`` / ``.yaml`` / ``.ini`` /
+          ``.log`` / ``.rst`` -> decoded as text
+        * ``.pdf`` -> descriptive message (not supported)
+        * ``.doc`` / ``.xls`` -> descriptive message (legacy binary formats)
 
-    Legacy binary formats (``.doc`` / ``.xls``) and any other extension
-    return a descriptive message instead of raising, so callers can still
-    record a review result.
+    Any other extension falls back to a best-effort UTF-8 decode.
 
     Args:
         file_data: The raw bytes of the document.
@@ -130,6 +252,16 @@ def parse_document(file_data: bytes, filename: str) -> str:
         return parse_docx(file_data)
     if ext == ".xlsx":
         return parse_xlsx(file_data)
+    if ext == ".zip":
+        return parse_zip(file_data)
+    if ext in _TEXT_EXTENSIONS:
+        return _decode_text(file_data)
+    if ext == ".pdf":
+        return (
+            "[当前版本暂不支持 PDF 直接解析。请将文档另存为 .docx 或导出为 "
+            ".md/.txt 后重新上传；或将多个文档打包为 .zip（内含 .docx/.md/.txt "
+            "等可解析文件）后上传。]"
+        )
     if ext == ".doc":
         return (
             "[不支持旧版 .doc 格式，请将文档另存为 .docx 后重新上传以进行评审。]"

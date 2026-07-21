@@ -86,6 +86,9 @@ let reviewElapsedTimer: ReturnType<typeof setInterval> | null = null
 let reviewHeartbeatTimer: ReturnType<typeof setInterval> | null = null
 const reviewLastLogAt = ref<number | null>(null)  // 上次产生日志的时间戳
 let lastLoggedStepKey = ''  // 上次记录日志的步骤标识(review_type + review_round + result)
+// LLM 流式输出状态(实时显示 LLM 返回的 chunk)
+const reviewStreamingChunk = ref('')  // 当前正在累积的 LLM chunk 文本
+const reviewReceivedFirstChunk = ref(false)  // 是否已收到首个 chunk
 
 // 添加进度日志
 function addProgressLog(msg: string, type: 'info'|'success'|'warning'|'error' = 'info') {
@@ -146,8 +149,16 @@ function startHeartbeat() {
   reviewHeartbeatTimer = setInterval(() => {
     if (reviewCurrentStatus.value === 'running') {
       const sinceLastLog = reviewLastLogAt.value ? (Date.now() - reviewLastLogAt.value) / 1000 : 999
-      if (sinceLastLog >= 5) {
-        addProgressLog(`仍在等待 LLM 返回...已耗时 ${formatElapsed(reviewElapsedSec.value)}`, 'info')
+      if (!reviewReceivedFirstChunk.value) {
+        // 还没收到首个 chunk,提示"仍在等待 LLM 返回"
+        if (sinceLastLog >= 5) {
+          addProgressLog(`仍在等待 LLM 返回...已耗时 ${formatElapsed(reviewElapsedSec.value)}`, 'info')
+        }
+      } else {
+        // 已经开始流式输出,如果超过 30 秒没有新 chunk,提示"流式响应暂停"
+        if (sinceLastLog >= 30) {
+          addProgressLog(`LLM 流式响应暂停...已耗时 ${formatElapsed(reviewElapsedSec.value)}`, 'info')
+        }
       }
     }
   }, 5000)
@@ -248,36 +259,104 @@ function startSSEStream() {
     } catch {
       return  // 忽略无法解析的消息(如心跳注释不会触发 onmessage)
     }
+
+    // 兼容老格式(无 type 字段,直接用 result 字段)
+    if (!data.type && data.result) {
+      data.type = 'final'
+    }
+
+    const label = reviewTypeLabel(data.review_type as ReviewType) || data.review_type || '评审'
+    const stepKey = `${data.review_type}|${data.review_round}|${data.result}`
+
+    switch (data.type) {
+      case 'connected':
+        // SSE 已建立,无需日志
+        return
+
+      case 'llm_start':
+        // LLM 开始调用,payload 是模型名
+        reviewCurrentStatus.value = 'running'
+        addProgressLog(`[${reviewCurrentStep.value}] 开始调用 LLM: ${data.payload || '未知模型'}`, 'info')
+        return
+
+      case 'chunk': {
+        // LLM 流式 chunk,累积到 streamingChunk
+        const chunkText: string = data.payload || ''
+        if (!reviewReceivedFirstChunk.value) {
+          reviewReceivedFirstChunk.value = true
+          addProgressLog(`LLM 已开始返回内容,实时输出:`, 'info')
+        }
+        reviewStreamingChunk.value += chunkText
+        reviewLastLogAt.value = Date.now()
+        return
+      }
+
+      case 'llm_done': {
+        // LLM 调用结束,把累积的 chunk 转为完整日志
+        if (reviewStreamingChunk.value) {
+          const fullContent = reviewStreamingChunk.value
+          reviewStreamingChunk.value = ''
+          addProgressLog(`LLM 返回内容:\n${fullContent}`, 'info')
+        } else {
+          addProgressLog(`LLM 调用结束(未返回内容)`, 'warning')
+        }
+        return
+      }
+
+      case 'llm_error':
+        addProgressLog(`LLM 调用失败: ${data.payload || '未知错误'}`, 'error')
+        reviewStreamingChunk.value = ''
+        return
+
+      case 'done':
+        // 评审完成,等待后续 final 事件推送最终详情
+        return
+
+      case 'error':
+        addProgressLog(`评审错误: ${data.payload || '未知错误'}`, 'error')
+        reviewCurrentStatus.value = 'error'
+        reviewCurrentStep.value = `${label} · 出错`
+        reviewStreamingChunk.value = ''
+        stopSSEStream()
+        return
+
+      case 'final': {
+        // 终态评审详情(来自 SSE 端点的 _serialize_review_for_sse)
+        if (data.result === 'pending') {
+          reviewCurrentStatus.value = 'running'
+          reviewCurrentStep.value = `${label} · 第 ${data.review_round} 轮`
+          if (stepKey !== lastLoggedStepKey) {
+            lastLoggedStepKey = stepKey
+            addProgressLog(`[${reviewCurrentStep.value}] SSE:LLM 正在分析...`, 'info')
+          }
+        } else if (data.result === 'passed') {
+          reviewCurrentStatus.value = 'passed'
+          reviewCurrentStep.value = `${label} · 已通过`
+          addProgressLog(`SSE:评审通过!总分:${data.total_score ?? '—'}`, 'success')
+          if (data.conclusion) addProgressLog(`结论:${data.conclusion}`, 'info')
+        } else if (data.result === 'failed') {
+          reviewCurrentStatus.value = 'failed'
+          reviewCurrentStep.value = `${label} · 未通过`
+          addProgressLog(`SSE:评审未通过,总分:${data.total_score ?? '—'}`, 'warning')
+          if (data.suggestions) addProgressLog(`建议:${data.suggestions}`, 'info')
+        } else if (data.result === 'error') {
+          reviewCurrentStatus.value = 'error'
+          reviewCurrentStep.value = `${label} · 出错`
+          addProgressLog(`SSE:评审出错,请查看评审记录`, 'error')
+        }
+        reviewStreamingChunk.value = ''
+        stopSSEStream()
+        return
+      }
+
+      default:
+        // 未知事件类型,忽略
+        return
+    }
+
+    // 兼容旧版 data.error 字段
     if (data.error) {
       addProgressLog(`SSE 错误:${data.error}`, 'error')
-      stopSSEStream()
-      return
-    }
-    const label = reviewTypeLabel(data.review_type as ReviewType) || data.review_type
-    const stepKey = `${data.review_type}|${data.review_round}|${data.result}`
-    if (data.result === 'pending') {
-      reviewCurrentStatus.value = 'running'
-      reviewCurrentStep.value = `${label} · 第 ${data.review_round} 轮`
-      if (stepKey !== lastLoggedStepKey) {
-        lastLoggedStepKey = stepKey
-        addProgressLog(`[${reviewCurrentStep.value}] SSE:LLM 正在分析...`, 'info')
-      }
-    } else if (data.result === 'passed') {
-      reviewCurrentStatus.value = 'passed'
-      reviewCurrentStep.value = `${label} · 已通过`
-      addProgressLog(`SSE:评审通过!总分:${data.total_score ?? '—'}`, 'success')
-      if (data.conclusion) addProgressLog(`结论:${data.conclusion}`, 'info')
-      stopSSEStream()
-    } else if (data.result === 'failed') {
-      reviewCurrentStatus.value = 'failed'
-      reviewCurrentStep.value = `${label} · 未通过`
-      addProgressLog(`SSE:评审未通过,总分:${data.total_score ?? '—'}`, 'warning')
-      if (data.suggestions) addProgressLog(`建议:${data.suggestions}`, 'info')
-      stopSSEStream()
-    } else if (data.result === 'error') {
-      reviewCurrentStatus.value = 'error'
-      reviewCurrentStep.value = `${label} · 出错`
-      addProgressLog(`SSE:评审出错,请查看评审记录`, 'error')
       stopSSEStream()
     }
   }
@@ -317,6 +396,9 @@ function openReviewDrawer() {
   reviewElapsedSec.value = 0
   reviewLastLogAt.value = null
   lastLoggedStepKey = ''
+  // 重置 LLM 流式输出状态
+  reviewStreamingChunk.value = ''
+  reviewReceivedFirstChunk.value = false
   addProgressLog('开始触发 LLM 评审...', 'info')
   startElapsedTimer()
   startHeartbeat()
@@ -1794,8 +1876,11 @@ onMounted(async () => {
                 <div class="elapsed-value">{{ formatElapsed(reviewElapsedSec) }}</div>
               </div>
             </div>
-            <div class="step-hint" v-if="reviewCurrentStatus === 'running'">
-              大模型正在分析中,请耐心等待... 通常需要 30 秒 ~ 2 分钟
+            <div class="step-hint" v-if="reviewCurrentStatus === 'running' && !reviewReceivedFirstChunk">
+              正在调用大模型,请耐心等待... 通常需要 30 秒 ~ 2 分钟
+            </div>
+            <div class="step-hint" v-else-if="reviewCurrentStatus === 'running' && reviewReceivedFirstChunk">
+              LLM 正在返回内容,实时输出已显示在下方日志区
             </div>
             <div class="step-hint" v-else-if="reviewCurrentStatus === 'triggering'">
               正在提交评审请求...
@@ -1831,9 +1916,14 @@ onMounted(async () => {
             <div v-if="reviewProgressLogs.length === 0" class="log-empty">
               暂无评审进度日志
             </div>
-            <div v-if="reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering'" class="log-pending">
+            <div v-if="(reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering') && !reviewReceivedFirstChunk" class="log-pending">
               <span class="log-dot">·</span>
               <span>等待 LLM 返回<span class="loading-dots"><span>.</span><span>.</span><span>.</span></span></span>
+            </div>
+            <div v-if="(reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering') && reviewReceivedFirstChunk" class="log-streaming">
+              <span class="log-dot">·</span>
+              <span class="streaming-label">LLM 实时返回:</span>
+              <pre class="streaming-content">{{ reviewStreamingChunk }}<span class="streaming-cursor">▍</span></pre>
             </div>
           </div>
         </div>
@@ -2298,6 +2388,50 @@ onMounted(async () => {
 .timeline-label {
   color: #909399;
   margin-right: 4px;
+}
+
+
+/* LLM 流式输出区域样式 */
+.log-streaming {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+.log-streaming .log-dot {
+  color: #67c23a;
+  font-weight: bold;
+  animation: blink 1s infinite;
+}
+.log-streaming .streaming-label {
+  flex-shrink: 0;
+  color: #67c23a;
+  font-weight: 500;
+}
+.log-streaming .streaming-content {
+  margin: 0;
+  flex: 1;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #606266;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.log-streaming .streaming-cursor {
+  display: inline-block;
+  color: #409eff;
+  animation: blink 0.8s infinite;
+}
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
 }
 
 </style>
