@@ -186,15 +186,22 @@ async def upload_code_package_endpoint(
     file_data = await file.read()
     content_type = file.content_type or "application/octet-stream"
 
-    release = await upload_code_package(
-        db=db,
-        release_id=release_id,
-        file_data=file_data,
-        file_name=file.filename or "code_package",
-        content_type=content_type,
-        change_notes=change_notes,
-        user_id=current_user.id,
-    )
+    try:
+        release = await upload_code_package(
+            db=db,
+            release_id=release_id,
+            file_data=file_data,
+            file_name=file.filename or "code_package",
+            content_type=content_type,
+            change_notes=change_notes,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        # 文件类型不在白名单等业务校验失败,统一返回 415
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=str(exc),
+        )
 
     await create_audit_log(
         db=db,
@@ -234,14 +241,21 @@ async def upload_test_report_endpoint(
     file_data = await file.read()
     content_type = file.content_type or "application/octet-stream"
 
-    release = await upload_test_report(
-        db=db,
-        release_id=release_id,
-        file_data=file_data,
-        file_name=file.filename or "test_report",
-        content_type=content_type,
-        user_id=current_user.id,
-    )
+    try:
+        release = await upload_test_report(
+            db=db,
+            release_id=release_id,
+            file_data=file_data,
+            file_name=file.filename or "test_report",
+            content_type=content_type,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        # 文件类型不在白名单等业务校验失败,统一返回 415
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=str(exc),
+        )
 
     await create_audit_log(
         db=db,
@@ -281,14 +295,21 @@ async def upload_review_report_endpoint(
     file_data = await file.read()
     content_type = file.content_type or "application/octet-stream"
 
-    release = await upload_review_report(
-        db=db,
-        release_id=release_id,
-        file_data=file_data,
-        file_name=file.filename or "review_report",
-        content_type=content_type,
-        user_id=current_user.id,
-    )
+    try:
+        release = await upload_review_report(
+            db=db,
+            release_id=release_id,
+            file_data=file_data,
+            file_name=file.filename or "review_report",
+            content_type=content_type,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        # 文件类型不在白名单等业务校验失败,统一返回 415
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=str(exc),
+        )
 
     await create_audit_log(
         db=db,
@@ -336,9 +357,21 @@ async def confirm_release_endpoint(
             detail="Only the project manager can confirm a release",
         )
 
-    release = await confirm_release(
-        db=db, release_id=release_id, user_id=current_user.id
-    )
+    try:
+        release = await confirm_release(
+            db=db, release_id=release_id, user_id=current_user.id
+        )
+    except ValueError as exc:
+        # 状态机不允许释放(已释放/未到 PENDING_CONFIRM 等),返回 409 Conflict
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
+    if release is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Release not found",
+        )
 
     await create_audit_log(
         db=db,

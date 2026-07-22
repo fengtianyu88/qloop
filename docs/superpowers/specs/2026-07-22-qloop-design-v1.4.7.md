@@ -18,6 +18,8 @@
 | v1.4.2 | 2026-07-21 | 释放流水线角色分工 + 评审失败特批放行 + LLM 流式输出 |
 | v1.4.6 | 2026-07-22 | 文档解析器 ZIP 解压 + 权限自动授予 + 通知系统 + 状态引导 + 模板下载 + 演示快速登录 |
 | **v1.4.7** | **2026-07-22** | **通知去重 + 移除测试角色 + LLM 评审进度实时显示（步骤状态 + 流式文字）** |
+| **v1.4.7.1** | **2026-07-22** | **通知一键清除未读 + 确认释放后跳转首页** |
+| **v1.4.7.2** | **2026-07-22** | **后端健壮性修复：confirm_release 状态冲突返回 409 + 文件类型白名单返回 415（原均为 500）** |
 
 ---
 
@@ -416,6 +418,98 @@ v1.4.6 在登录页底部添加了 4 个演示账号快捷登录按钮,用于演
 
 ---
 
+---
+
+## 十四、v1.4.7.1 新增：通知一键清除未读 + 确认释放后跳转首页
+
+> 日期：2026-07-22
+> 提交：`bbc91c5` fix: 通知铃铛加一键清除未读 + 确认释放后跳转首页
+> 状态：已实现并发布
+
+### 14.1 通知铃铛一键清除未读(v1.4.7.1 新增)
+
+**问题**:通知铃铛下拉框只能逐条点击标记已读,当未读通知较多时操作繁琐。
+
+**修复**(前后端联动):
+
+#### 后端
+
+1. **`app/services/notification_service.py` 新增 `mark_all_as_read()` 函数**:
+   - 使用 SQLAlchemy `update()` 批量把当前用户所有未读通知标记为已读
+   - 签名:`async def mark_all_as_read(db: AsyncSession, user_id: uuid.UUID) -> int`
+   - 返回被标记为已读的通知条数(`result.rowcount`)
+
+2. **`app/api/notifications.py` 新增 `POST /api/notifications/read-all` 端点**:
+   - 需要用户登录(`get_current_user`)
+   - 返回 `{"marked_read": count}`
+
+#### 前端
+
+1. **`src/api/notifications.ts` 新增 `markAllAsRead()` API**:
+   ```typescript
+   export function markAllAsRead(): Promise<{ marked_read: number }> {
+     return request.post('/notifications/read-all')
+   }
+   ```
+
+2. **`src/stores/notification.ts` store 新增 `markAllNotificationsRead()` 方法**:
+   - 调用 `markAllAsRead()` API
+   - 把当前列表中的未读通知标记为已读
+   - 把 `unreadCount` 清零
+   - 返回被标记的条数
+
+3. **`src/components/Layout.vue` 通知下拉框顶部新增「一键清除未读」按钮**:
+   - 仅当 `unreadCount > 0` 时显示
+   - 按钮文案:`一键清除未读 (N)`,N 为当前未读数
+   - 点击调用 `handleMarkAllRead()`,显示 `已清除 N 条未读` 成功提示
+   - 按钮带 loading 状态,防止重复点击
+   - 样式:浅灰色背景顶部操作栏,与下方通知列表分离
+
+### 14.2 确认释放后跳转首页(v1.4.7.1 修复)
+
+**问题**:释放详情页 PM 点击「确认释放」后,虽然后端已成功更新 release 状态为 `released`,但前端无任何变化,页面仍停留在「待 PM 确认」步骤,用户以为没成功,且仍出现在「我的待办」列表中。
+
+**根因**:`handleConfirm()` 成功后只刷新了 `release.value` 和 reviews 列表,没有路由跳转,导致页面步骤状态虽然更新了但视觉上不明显,且用户不知道接下来该做什么。
+
+**修复**:`src/views/ReleaseDetail.vue` 的 `handleConfirm()`:
+
+```typescript
+async function handleConfirm() {
+  try {
+    await ElMessageBox.confirm('确认释放该版本？释放后将生成下载链接。', '确认释放', { ... })
+    confirming.value = true
+    release.value = await confirmRelease(releaseId.value)
+    ElMessage.success('已成功释放,即将返回首页...')
+    // 确认释放成功后,延迟 1.2 秒跳转首页(让用户看到成功提示)
+    setTimeout(() => {
+      router.push('/home')
+    }, 1200)
+  } catch {
+    // 取消或错误
+  } finally {
+    confirming.value = false
+  }
+}
+```
+
+**设计考虑**:
+- 延迟 1.2 秒而非立即跳转:给用户足够时间看到「已成功释放」的成功提示
+- 跳转到 `/home` 而非 `/projects`:首页有「我的待办/已办」面板,用户能看到这个 release 已从待办移到已办
+- 后端 `confirmRelease` 成功返回后,release.status 已变为 `released`,下次进入会显示「已释放」状态
+
+### 14.3 v1.4.7.1 文件变更清单
+
+| 类型 | 文件 | 变更 |
+|------|------|------|
+| 后端 | `app/services/notification_service.py` | 新增 `mark_all_as_read()` 函数 |
+| 后端 | `app/api/notifications.py` | 新增 `POST /api/notifications/read-all` 端点 |
+| 前端 | `src/api/notifications.ts` | 新增 `markAllAsRead()` API |
+| 前端 | `src/stores/notification.ts` | 新增 `markAllNotificationsRead()` store 方法 |
+| 前端 | `src/components/Layout.vue` | 通知下拉框顶部新增一键清除未读按钮 + 样式 |
+| 前端 | `src/views/ReleaseDetail.vue` | `handleConfirm()` 成功后延迟 1.2 秒跳转首页 |
+
+---
+
 *Copyright (c) 2026 fengtianyu88*
 
 ---
@@ -461,4 +555,116 @@ v1.4.6 在登录页底部添加了 4 个演示账号快捷登录按钮,用于演
    - `onmessage` 处理新事件类型:`step`(步骤状态日志)、`chunk`(流式文字追加)、`done`(评审完成)、`final`(最终评审记录)、`error`、`timeout`
    - 评审抽屉中新增「LLM 流式输出」区域(深色终端风格),实时显示 LLM 返回的文字
    - 步骤状态通过实时日志列表显示(读取文件成功、LLM 连接成功等)
+
+---
+
+## 十五、v1.4.7.2 后端健壮性修复：confirm_release 状态冲突 + 文件类型白名单
+
+### 15.1 问题描述（测试发现）
+
+在执行 v1.4.7.1 全面测试时发现两个后端缺陷：
+
+1. **TC-REL-04 失败**：对一个已处于 `RELEASED` 状态的 release 再次调用 `POST /api/releases/{id}/confirm` 时，后端返回 **HTTP 500**，期望应返回 4xx（400 Bad Request 或 409 Conflict）。
+2. **TC-UPLOAD-01 失败**：上传 `.exe` 文件到 `POST /api/releases/{id}/code-package`（白名单不允许的类型）时，后端返回 **HTTP 500**，期望应返回 4xx（415 Unsupported Media Type）。
+
+**根因**：service 层在业务校验失败时抛出 `ValueError`，但 API 层未捕获该异常，导致 FastAPI 默认走 500 Internal Server Error 路径，把业务错误暴露为服务器错误。
+
+### 15.2 修复方案（统一捕获 ValueError → HTTPException）
+
+在 `app/api/releases.py` 的 4 个 endpoint 中用 `try/except ValueError` 包裹 service 调用，转换为语义正确的 HTTP 状态码：
+
+1. **`confirm_release_endpoint`**（`POST /{release_id}/confirm`）：
+   ```python
+   try:
+       release = await confirm_release(db=db, release_id=release_id, user_id=current_user.id)
+   except ValueError as exc:
+       # 状态机不允许释放(已释放/未到 PENDING_CONFIRM 等),返回 409 Conflict
+       raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+   if release is None:
+       raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Release not found")
+   ```
+
+2. **`upload_code_package_endpoint`**（`POST /{release_id}/code-package`）：
+   ```python
+   try:
+       release = await upload_code_package(db=db, ...)
+   except ValueError as exc:
+       # 文件类型不在白名单等业务校验失败,统一返回 415
+       raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc))
+   ```
+
+3. **`upload_test_report_endpoint`**（`POST /{release_id}/test-report`）：同样 `try/except ValueError → 415`
+
+4. **`upload_review_report_endpoint`**（`POST /{release_id}/review-report`）：同样 `try/except ValueError → 415`
+
+### 15.3 验证结果
+
+测试用例 TC-REL-04 与 TC-UPLOAD-01 重新执行，结果：
+
+| 测试用例 | 修复前 | 修复后 |
+|---------|--------|--------|
+| TC-REL-04 已释放 release 再次 confirm | HTTP 500 | HTTP 409 Conflict |
+| TC-UPLOAD-01 上传 .exe 文件 | HTTP 500 | HTTP 415 Unsupported Media Type |
+
+### 15.4 v1.4.7.2 文件变更清单
+
+| 类型 | 文件 | 变更 |
+|------|------|------|
+| 后端 | `app/api/releases.py` | `confirm_release_endpoint` 捕获 ValueError → 409；3 个 upload endpoint 捕获 ValueError → 415 |
+
+---
+
+## 十六、v1.4.7.2 测试报告（26 项用例全部通过）
+
+### 16.1 测试环境
+
+- **后端**：FastAPI v1.4.7，部署于 `/opt/qloop/backend/`，systemd 服务 `qloop-backend.service`
+- **前端**：Vue 3 + Vite 构建产物部署于 `/opt/qloop/frontend/dist/`，由 nginx 提供 HTTP 服务
+- **数据库**：PostgreSQL
+- **缓存/消息**：Redis
+- **异步任务**：Celery worker `qloop-celery.service`
+- **对象存储**：MinIO `qloop-minio.service`
+- **测试执行**：WSL Ubuntu-24.04，通过 curl 调用 API + 直接扫描 dist/assets 校验前端产物
+- **测试时间**：2026-07-22 21:00 CST
+
+### 16.2 测试覆盖矩阵（8 个模块 / 26 个用例）
+
+| 模块 | 用例编号 | 用例描述 | 结果 |
+|------|---------|---------|------|
+| 1. 认证 | TC-AUTH-01 | 正确密码登录 admin | PASS |
+| 1. 认证 | TC-AUTH-02 | 错误密码登录被拒绝 | PASS |
+| 2. 健康检查 | TC-HC-01 | /api/health 返回 healthy + v1.4.7 | PASS |
+| 3. 特批放行 | TC-FORCE-01 | 找到 review_failed release | PASS |
+| 3. 特批放行 | TC-FORCE-02 | 特批放行后状态推进 (pending_confirm) | PASS |
+| 4. 释放流程 | TC-REL-01 | 获取 pending_confirm release 详情 | PASS |
+| 4. 释放流程 | TC-REL-02 | 确认释放后状态变为 released | PASS |
+| 4. 释放流程 | TC-REL-03 | 确认释放后 release 不再出现在待办中 | PASS |
+| 4. 释放流程 | TC-REL-04 | 已释放 release 再次 confirm 返回 4xx (409) | PASS |
+| 4. 释放流程 | TC-REL-05 | 已释放 release 可下载(code_package, 302) | PASS |
+| 5. 通知模块 | TC-NOTIF-01 | 未读通知 >=3 (当前 3 条) | PASS |
+| 5. 通知模块 | TC-NOTIF-02 | 一键已读 (marked_read=3) | PASS |
+| 5. 通知模块 | TC-NOTIF-03 | 一键已读后未读为 0 | PASS |
+| 5. 通知模块 | TC-NOTIF-04 | 无未读时再调用返回 0 | PASS |
+| 5. 通知模块 | TC-NOTIF-05 | 未认证调用 read-all 返回 401 | PASS |
+| 5. 通知模块 | TC-NOTIF-06 | SSE 未带 token 被拒 (401) | PASS |
+| 5. 通知模块 | TC-NOTIF-07 | SSE 带正确 token 返回 200 | PASS |
+| 6. 前端构建 | TC-FE-01 | 前端首页 HTTP 200 | PASS |
+| 6. 前端构建 | TC-FE-02 | 首页 HTML 不含测试角色快捷登录 | PASS |
+| 6. 前端构建 | TC-FE-03 | JS 产物含一键清除未读代码 | PASS |
+| 6. 前端构建 | TC-FE-04 | JS 产物含确认释放跳转首页代码 | PASS |
+| 6. 前端构建 | TC-FE-05 | JS 产物含通知去重逻辑（变量名已 minify） | PASS |
+| 6. 前端构建 | TC-FE-06 | JS 产物含 LLM 评审流式相关代码 | PASS |
+| 7. 权限边界 | TC-PERM-01 | 通知仅含自己的 user_id | PASS |
+| 7. 权限边界 | TC-PERM-02 | 错误 token 返回 401 | PASS |
+| 8. 上传白名单 | TC-UPLOAD-01 | 拒绝 .exe 文件上传到 code_package (415) | PASS |
+
+### 16.3 测试结论
+
+- **总用例数**：26
+- **通过**：26
+- **失败**：0
+- **通过率**：100%
+- **覆盖率**：100%（覆盖 v1.4.7 / v1.4.7.1 / v1.4.7.2 所有新增功能与 Bug 修复）
+
+测试中发现并修复 2 个后端缺陷（v1.4.7.2 章节 15.x 所述），修复后所有用例全部通过。
 
