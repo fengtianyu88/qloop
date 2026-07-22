@@ -230,4 +230,6 @@ Copyright (c) 2026 fengtianyu88
 
 ## 星标趋势
 
-[![星标趋势图](https://api.star-history.com/svg?repos=fengtianyu88/qloop&type=Date)](https://star-history.com/#fengtianyu88/qloop&Date)
+<img src="docs/star-trend.svg" alt="星标趋势" width="720">
+
+> 根据 GitHub stargazers 数据自动生成。重新运行 `gen_star_trend.py` 可刷新。

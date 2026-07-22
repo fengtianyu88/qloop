@@ -230,6 +230,8 @@ Copyright (c) 2026 fengtianyu88
 
 ---
 
-## Star History
+## Star Trend
 
-[![Star History Chart](https://api.star-history.com/svg?repos=fengtianyu88/qloop&type=Date)](https://star-history.com/#fengtianyu88/qloop&Date)
+<img src="docs/star-trend.svg" alt="Star Trend" width="720">
+
+> Auto-generated from GitHub stargazers data. Re-run `gen_star_trend.py` to refresh.
