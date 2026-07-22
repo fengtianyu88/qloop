@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -69,6 +69,21 @@ async function handleNotificationClick(n: Notification) {
   }
 }
 
+// 一键把所有未读通知标记为已读
+const markingAllRead = ref(false)
+async function handleMarkAllRead() {
+  if (markingAllRead.value || unreadCount.value === 0) return
+  markingAllRead.value = true
+  try {
+    const count = await notificationStore.markAllNotificationsRead()
+    ElMessage.success(count > 0 ? `已清除 ${count} 条未读` : '没有未读通知')
+  } catch {
+    ElMessage.error('清除失败,请稍后重试')
+  } finally {
+    markingAllRead.value = false
+  }
+}
+
 function handleMenuSelect(index: string) {
   router.push(index)
 }
@@ -135,6 +150,19 @@ onMounted(async () => {
             </el-badge>
             <template #dropdown>
               <el-dropdown-menu class="notification-dropdown">
+                <!-- 顶部操作栏:一键清除未读 -->
+                <div class="notification-actions" v-if="unreadCount > 0">
+                  <el-button
+                    size="small"
+                    type="primary"
+                    link
+                    :loading="markingAllRead"
+                    @click="handleMarkAllRead"
+                  >
+                    <el-icon><Check /></el-icon>
+                    一键清除未读 ({{ unreadCount }})
+                  </el-button>
+                </div>
                 <el-dropdown-item v-if="notifications.length === 0" disabled>
                   暂无通知
                 </el-dropdown-item>
@@ -279,6 +307,14 @@ onMounted(async () => {
   width: 320px;
   max-height: 400px;
   overflow-y: auto;
+}
+
+.notification-actions {
+  padding: 6px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  justify-content: flex-end;
+  background: #fafafa;
 }
 
 .notification-item {

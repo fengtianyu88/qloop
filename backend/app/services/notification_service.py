@@ -3,7 +3,7 @@
 import uuid
 from typing import List, Optional, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.notification import Notification, NotificationType
@@ -116,3 +116,25 @@ async def mark_as_read(
     await db.commit()
     await db.refresh(notification)
     return notification
+
+
+async def mark_all_as_read(db: AsyncSession, user_id: uuid.UUID) -> int:
+    """把指定用户的所有未读通知标记为已读。
+
+    Args:
+        db: The async database session.
+        user_id: The user ID.
+
+    Returns:
+        被标记为已读的通知条数。
+    """
+    result = await db.execute(
+        update(Notification)
+        .where(
+            Notification.user_id == user_id,
+            Notification.is_read == False,  # noqa: E712
+        )
+        .values(is_read=True)
+    )
+    await db.commit()
+    return result.rowcount or 0

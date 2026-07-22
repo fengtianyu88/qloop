@@ -539,8 +539,11 @@ async function handleConfirm() {
     })
     confirming.value = true
     release.value = await confirmRelease(releaseId.value)
-    ElMessage.success('释放成功')
-    await loadReviews()
+    ElMessage.success('已成功释放,即将返回首页...')
+    // 确认释放成功后,延迟 1.2 秒跳转首页(让用户看到成功提示)
+    setTimeout(() => {
+      router.push('/home')
+    }, 1200)
   } catch {
     // 取消或错误
   } finally {

@@ -15,3 +15,8 @@ export function getNotifications(
 export function markAsRead(id: string): Promise<Notification> {
   return request.post(`/notifications/${id}/read`)
 }
+
+/** 把所有未读通知标记为已读 */
+export function markAllAsRead(): Promise<{ marked_read: number }> {
+  return request.post('/notifications/read-all')
+}

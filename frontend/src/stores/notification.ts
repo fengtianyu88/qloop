@@ -3,7 +3,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { getNotifications, markAsRead } from '@/api/notifications'
+import { getNotifications, markAllAsRead, markAsRead } from '@/api/notifications'
 import type { Notification } from '@/types'
 
 export const useNotificationStore = defineStore('notification', () => {
@@ -42,11 +42,23 @@ export const useNotificationStore = defineStore('notification', () => {
     }
   }
 
+  /** 把所有未读通知标记为已读 */
+  async function markAllNotificationsRead(): Promise<number> {
+    const res = await markAllAsRead()
+    // 把当前列表中的未读通知也标记为已读
+    notifications.value.forEach((n) => {
+      if (!n.is_read) n.is_read = true
+    })
+    unreadCount.value = 0
+    return res.marked_read || 0
+  }
+
   return {
     unreadCount,
     notifications,
     fetchUnreadCount,
     fetchNotifications,
     markNotificationRead,
+    markAllNotificationsRead,
   }
 })

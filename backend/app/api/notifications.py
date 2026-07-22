@@ -19,6 +19,7 @@ from app.models.user import User
 from app.schemas.common import PaginatedResponse
 from app.services.notification_service import (
     get_user_notifications,
+    mark_all_as_read,
     mark_as_read,
 )
 
@@ -85,6 +86,19 @@ async def mark_notification_read(
             detail="Notification not found",
         )
     return NotificationResponse.model_validate(notification)
+
+
+@router.post("/read-all")
+async def mark_all_notifications_read(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """把当前用户的所有未读通知标记为已读。
+
+    返回被标记为已读的通知条数。
+    """
+    count = await mark_all_as_read(db=db, user_id=current_user.id)
+    return {"marked_read": count}
 
 
 @router.get("/stream")
