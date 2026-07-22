@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_sse, require_roles
 from app.models.project import Release, Version
-from app.models.review import LLMModel, LLMReview, ReviewRule, ReviewType
+from app.models.review import LLMModel, LLMReview, ReviewResult, ReviewRule, ReviewType
 from app.models.user import SystemRole, User
 from app.redis_client import get_redis
 from app.schemas.review import LLMReviewResponse
@@ -199,6 +199,20 @@ async def trigger_review(
             ),
         )
 
+    # 预检:是否已有进行中的评审(防止并发触发,API 层提前返回 409)
+    pending_check = await db.execute(
+        select(LLMReview).where(
+            LLMReview.release_id == release.id,
+            LLMReview.review_type == review_type,
+            LLMReview.result == ReviewResult.PENDING,
+        ).limit(1)
+    )
+    if pending_check.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="该评审类型已有进行中的评审,请等待完成",
+        )
+
     # Import the task lazily to avoid importing Celery/Redis at module
     # import time in contexts where they may not be configured.
     from app.tasks.review_tasks import run_llm_review
@@ -261,27 +275,7 @@ async def stream_review_progress(
         }
 
     async def event_generator():
-        # 1. 先查数据库:如果评审已终态,直接返回最终状态并关闭
-        try:
-            result = await db.execute(
-                select(LLMReview)
-                .where(LLMReview.release_id == release_id)
-                .order_by(LLMReview.created_at.desc())
-                .limit(1)
-            )
-            review = result.scalar_one_or_none()
-        except Exception as exc:
-            yield f"data: {json.dumps({'type': 'error', 'payload': str(exc)}, ensure_ascii=False)}\n\n"
-            return
-
-        if review:
-            result_str = review.result.value if hasattr(review.result, "value") else str(review.result)
-            if result_str in ("passed", "failed", "error"):
-                data = await _build_review_data(review, "done")
-                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                return
-
-        # 2. 订阅 Redis pub/sub channel 等待实时事件
+        # 1. 订阅 Redis pub/sub channel (先订阅,确保不遗漏事件)
         channel = f"review_stream:{release_id}"
         try:
             redis = await get_redis()
@@ -291,6 +285,32 @@ async def stream_review_progress(
 
         pubsub = redis.pubsub()
         await pubsub.subscribe(channel)
+
+        # 2. 查 DB 获取当前评审状态
+        # 如果有 PENDING 评审,等待 Redis 事件(step/chunk/done)
+        # 如果没有 PENDING 评审,也不推送旧 done - 保持订阅等待新评审被触发
+        # (前端通过 GET /api/reviews/release/{id} 查询历史评审记录,
+        #  SSE 的职责是实时推送新事件,不负责推送历史结果)
+        try:
+            pending_result = await db.execute(
+                select(LLMReview)
+                .where(
+                    LLMReview.release_id == release_id,
+                    LLMReview.result == ReviewResult.PENDING,
+                )
+                .order_by(LLMReview.created_at.desc())
+                .limit(1)
+            )
+            pending_review = pending_result.scalar_one_or_none()
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'payload': str(exc)}, ensure_ascii=False)}\n\n"
+            return
+
+        if pending_review is not None:
+            # 有 PENDING 评审,推送 connected 事件让前端知道 SSE 已连接
+            yield f"data: {json.dumps({'type': 'connected', 'payload': '评审进行中'}, ensure_ascii=False)}\n\n"
+        # 没有 PENDING 评审时不推送任何东西,直接进入 Redis 订阅循环等待新事件
+
         idle_seconds = 0
         try:
             while True:

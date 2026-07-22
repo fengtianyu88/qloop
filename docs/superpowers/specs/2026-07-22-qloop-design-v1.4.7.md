@@ -20,6 +20,7 @@
 | **v1.4.7** | **2026-07-22** | **通知去重 + 移除测试角色 + LLM 评审进度实时显示（步骤状态 + 流式文字）** |
 | **v1.4.7.1** | **2026-07-22** | **通知一键清除未读 + 确认释放后跳转首页** |
 | **v1.4.7.2** | **2026-07-22** | **后端健壮性修复：confirm_release 状态冲突返回 409 + 文件类型白名单返回 415（原均为 500）** |
+| **v1.4.7.3** | **2026-07-22** | **LLM 评审真实测试 + 3 个后端 Bug 修复：API 层并发预检(409) + SSE 优先查 PENDING + 不推送旧 done** |
 
 ---
 
@@ -668,3 +669,191 @@ async function handleConfirm() {
 
 测试中发现并修复 2 个后端缺陷（v1.4.7.2 章节 15.x 所述），修复后所有用例全部通过。
 
+
+
+---
+
+## 十七、v1.4.7.3 LLM 评审真实测试 + 3 个后端 Bug 修复
+
+> 日期：2026-07-22
+> 状态：已实现并测试通过
+
+### 17.1 背景
+
+用户质疑之前"测试覆盖率 100%"的说法，特别是 **LLM 评审和流式输出有没有真正测试**。经检查，之前的 TC-FE-06 只检查了前端 JS 产物是否含相关代码字符串，**没有真正触发 LLM 评审并验证返回结果**。SSE 流式输出也没有真正接收 step/chunk 事件。
+
+为此，设计了 12 项 LLM 专项测试用例，**真实触发 LLM 评审**，并通过 SSE 接收流式输出。
+
+### 17.2 发现的 3 个后端 Bug
+
+#### Bug 1：API 层并发触发保护未预检（trigger_review）
+
+**问题**：`POST /api/reviews/trigger/{release_id}` 在调用 `run_llm_review.delay()` 派发 Celery 任务之前，**没有检查是否已有 PENDING 评审**。虽然 `reviewer.py` 在 Celery 任务执行时会检查（抛 `ValueError("该评审类型已有进行中的评审")`），但此时 API 已返回 202。客户端收到 202 以为成功，但任务实际立即失败。
+
+**修复**：在 `trigger_review` 函数中，`run_llm_review.delay()` 之前添加 PENDING 评审预检：
+
+```python
+# 预检:是否已有进行中的评审(防止并发触发,API 层提前返回 409)
+pending_check = await db.execute(
+    select(LLMReview).where(
+        LLMReview.release_id == release.id,
+        LLMReview.review_type == review_type,
+        LLMReview.result == ReviewResult.PENDING,
+    ).limit(1)
+)
+if pending_check.scalar_one_or_none() is not None:
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="该评审类型已有进行中的评审,请等待完成",
+    )
+```
+
+#### Bug 2：SSE 查询逻辑缺陷（stream_review_progress）
+
+**问题**：SSE 启动时查 DB 取"最近一条评审记录"，**不区分 review_type**。如果之前有 expert_report_review 的 error 记录，即使当前有新的 code_review PENDING 评审，SSE 也会查到旧的 error 记录，推送 done 并关闭——**错过了当前评审的 step/chunk 事件**。
+
+**修复**：SSE 启动时优先查找 PENDING 评审。如果有 PENDING 评审，推送 `connected` 事件并订阅 Redis 等待实时事件；如果没有 PENDING 评审，**不推送旧 done**，直接订阅 Redis 等待新评审被触发。
+
+```python
+# 1. 先订阅 Redis pub/sub channel (先订阅,确保不遗漏事件)
+channel = f"review_stream:{release_id}"
+redis = await get_redis()
+pubsub = redis.pubsub()
+await pubsub.subscribe(channel)
+
+# 2. 查 DB 获取当前评审状态
+pending_result = await db.execute(
+    select(LLMReview).where(
+        LLMReview.release_id == release_id,
+        LLMReview.result == ReviewResult.PENDING,
+    ).order_by(LLMReview.created_at.desc()).limit(1)
+)
+pending_review = pending_result.scalar_one_or_none()
+
+if pending_review is not None:
+    # 有 PENDING 评审,推送 connected 事件让前端知道 SSE 已连接
+    yield f"data: {json.dumps({'type': 'connected', 'payload': '评审进行中'})}\n\n"
+# 没有 PENDING 评审时不推送任何东西,直接进入 Redis 订阅循环等待新事件
+```
+
+#### Bug 3：SSE 推送旧评审结果导致连接过早关闭
+
+**问题**：这是 Bug 2 的延续。SSE 在没有 PENDING 评审时推送旧的 done 事件并关闭连接，导致：
+- 客户端打开 SSE 时如果评审刚被触发但 PENDING 记录还没创建（Celery 任务还在队列中），SSE 会推送旧 done 并关闭
+- 客户端错过新评审的所有 step/chunk 事件
+
+**修复**：与 Bug 2 一起修复。SSE 的职责是**实时推送新事件**，不负责推送历史结果。前端通过 `GET /api/reviews/release/{id}` 查询历史评审记录。
+
+### 17.3 测试用例设计（12 项）
+
+| 用例 ID | 测试内容 | 验证方法 |
+|---------|---------|---------|
+| TC-AUTH-01 | 正确密码登录 admin | 返回 access_token |
+| TC-LLM-01 | 真实触发 LLM 评审 | `POST /api/reviews/trigger/{id}?review_type=code_review` 返回 202 + task_id |
+| TC-LLM-05 | 并发触发保护 | 立即再次触发相同 release 的评审，返回 409 Conflict |
+| TC-LLM-02a | SSE 至少收到一个有效事件 | SSE 流中包含 heartbeat/step/done/chunk 事件 |
+| TC-LLM-02b | SSE 收到 step 事件 | SSE 流中包含 `"type":"step"` 事件 |
+| TC-LLM-02c | SSE 收到 done/final 事件 | SSE 流中包含 `"type":"done"` 或 `"type":"final"` 事件 |
+| TC-LLM-02d | SSE 收到 chunk 事件（LLM 流式输出） | SSE 流中包含 `"type":"chunk"` 事件 |
+| TC-LLM-03 | 查询评审记录 | `GET /api/reviews/release/{id}` 返回评审记录列表 |
+| TC-LLM-03a | 评审记录字段完整 | 包含 review_type/result/total_score/triggered_by_name |
+| TC-LLM-03b | 评审 result 是有效枚举值 | result ∈ {passed, failed, pending, error} |
+| TC-LLM-03c | LLM 真实调用 | model_used 不为 null（如 MiniMax-M3） |
+| TC-LLM-06 | SSE 未带 token 被拒 | 返回 401/403/422 |
+
+### 17.4 测试环境
+
+- 后端：`/opt/qloop/backend`（FastAPI + Celery + Redis + PostgreSQL）
+- LLM 模型：MiniMax-M3（通过 OpenAI 兼容协议调用）
+- 测试目标 release：`396d0a92-e6e7-4035-a21b-4777c37e92a1`（有 code_package_path）
+- 评审类型：code_review
+
+### 17.5 测试结果
+
+```
+==========================================
+总计: 12
+通过: 12
+失败: 0
+通过率: 100%
+==========================================
+
+[PASS] TC-AUTH-01 登录 admin
+[PASS] TC-LLM-01 触发 LLM 评审返回 202 + task_id (9261d895-...)
+[PASS] TC-LLM-05 并发触发被拒 (HTTP=409)
+[PASS] TC-LLM-02a SSE 收到至少一个有效事件
+[PASS] TC-LLM-02b SSE 收到 step 事件
+[PASS] TC-LLM-02c SSE 收到 done/final 事件
+[PASS] TC-LLM-02d SSE 收到 chunk 事件(LLM 流式输出)
+[PASS] TC-LLM-03 查询评审记录 (count=5)
+[PASS] TC-LLM-03a 评审记录字段完整
+[PASS] TC-LLM-03b 评审 result 是有效枚举值
+[PASS] TC-LLM-03c LLM 真实调用 (model_used 不为 null)
+[PASS] TC-LLM-06 SSE 未带 token 被拒 (401)
+```
+
+### 17.6 SSE 流式输出详情
+
+SSE 共接收 **16513 字节**，包含：
+
+| 事件类型 | 数量 | 说明 |
+|---------|------|------|
+| heartbeat | 多个 | 心跳保活 |
+| step | 10 | 评审步骤（读取文件/渲染提示词/连接 LLM 等） |
+| chunk | 143 | LLM 流式输出文本片段 |
+| done | 1 | 评审完成（result=passed, total_score=52.0） |
+| final | 1 | 最终评审记录（从 DB 查询） |
+
+step 事件示例：
+```
+step: 读取交付物文件...
+step: 读取文件成功(共 342 字符)
+step: 渲染评审提示词...
+step: 提示词准备完成
+step: 连接 LLM(MiniMax-M3)...
+step: LLM 连接成功,等待流式返回...
+```
+
+chunk 事件示例（LLM 流式输出）：
+```
+chunk: Mattis The user wants a comprehensive code quality review...
+chunk: returns 42. Let me evaluate it...
+chunk: 1. **Code Standards (代码规范)**:...
+chunk:    - Function naming: `foo` is not a descriptive name...
+... (共 143 个 chunk)
+```
+
+done 事件：
+```json
+{"type": "done", "result": "passed", "review_id": "...", "total_score": 52.0,
+ "conclusion": "代码功能上可正确执行（返回常量 42），但作为一份可维护的源码，存在命名、文档、类型提示、测试等多方面严重缺失...",
+ "model_used": "MiniMax-M3"}
+```
+
+### 17.7 评审记录详情
+
+```
+review_type=code_review
+result=passed
+total_score=52.0
+model_used=MiniMax-M3
+triggered_by_name=admin
+conclusion=代码功能上可正确执行（返回常量 42），但作为一份可维护的源码，存在命名、文档、类型提示、测试等多方面严重缺失。仅适合作为占位/示例代码，不建议直接用于生产或作为正式交付物。
+```
+
+### 17.8 文件变更清单
+
+| 文件 | 变更 |
+|------|------|
+| `app/api/reviews.py` | 1. 导入 ReviewResult 2. trigger_review 添加 PENDING 预检(返回 409) 3. SSE 优先查 PENDING,不推送旧 done,先订阅 Redis |
+
+### 17.9 测试结论
+
+1. **LLM 评审真实测试通过**：MiniMax-M3 模型真实调用，返回 score=52.0，评审结论完整
+2. **SSE 流式输出真实测试通过**：收到 10 个 step 事件 + 143 个 chunk 事件，LLM 输出实时推送
+3. **并发触发保护修复验证通过**：API 层返回 409 Conflict
+4. **3 个后端 Bug 全部修复**：API 预检 + SSE 查询逻辑 + 旧 done 推送
+
+**重要声明**：测试覆盖率"100%"是相对于当前定义的测试用例集合（26 项基础测试 + 12 项 LLM 专项测试 = 38 项）而言的。真实测试过程中发现了 5 个后端 bug（v1.4.7.2 修复 2 个 + v1.4.7.3 修复 3 个），证明测试是有效的。但软件测试不能证明"没有问题"，只能证明"已测试的场景没有问题"。未来可能随着使用场景增加而发现新的 bug。
+
+---
