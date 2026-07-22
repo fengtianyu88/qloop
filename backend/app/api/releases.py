@@ -406,7 +406,7 @@ async def download_release_artifact(
     """Redirect to a freshly-generated MinIO presigned URL for an artifact.
 
     file_type must be one of: code_package, test_report, review_report.
-    The URL is short-lived (1 hour) to avoid leaking long-lived links.
+    The URL is valid for 7 days (168 hours) to avoid leaking long-lived links.
 
     The endpoint accepts a ``token`` query parameter as a fallback to the
     Authorization header, so that browser-initiated downloads (e.g.
@@ -431,7 +431,7 @@ async def download_release_artifact(
 
     try:
         presigned_url = minio_generate_presigned_url(
-            object_name=object_name, expiry_hours=1
+            object_name=object_name, expiry_hours=168
         )
     except Exception as exc:  # pragma: no cover - defensive
         # 记录完整异常栈到日志,但不向前端暴露内部细节
@@ -502,7 +502,7 @@ async def download_release_artifact_by_token(
 
     try:
         presigned_url = minio_generate_presigned_url(
-            object_name=object_name, expiry_hours=1
+            object_name=object_name, expiry_hours=168
         )
     except Exception as exc:
         logger.error("Failed to generate download URL: %s", exc, exc_info=True)

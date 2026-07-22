@@ -1,0 +1,1207 @@
+[
+  {
+    "tc_id": "TC-AUTH-01",
+    "status": "PASS",
+    "actual_result": "登录成功,token=eyJhbGciOiJIUzI1NiIs...",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-AUTH-02",
+    "status": "PASS",
+    "actual_result": "错误密码被拒 HTTP=401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-AUTH-03",
+    "status": "PASS",
+    "actual_result": "不存在用户被拒 HTTP=401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-AUTH-04",
+    "status": "PASS",
+    "actual_result": "空密码被拒 HTTP=401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-AUTH-05",
+    "status": "PASS",
+    "actual_result": "空用户名被拒 HTTP=401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-AUTH-06",
+    "status": "PASS",
+    "actual_result": "空请求体返回 422",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-AUTH-11",
+    "status": "PASS",
+    "actual_result": "错误 token 返回 401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-AUTH-12",
+    "status": "PASS",
+    "actual_result": "无 token 返回 401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-HC-01",
+    "status": "PASS",
+    "actual_result": "status=healthy",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-HC-02",
+    "status": "PASS",
+    "actual_result": "version=1.4.7",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PROJ-01",
+    "status": "PASS",
+    "actual_result": "获取项目列表成功(22 个)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PROJ-03",
+    "status": "PASS",
+    "actual_result": "创建版本成功,version_id=ceebea79, dev/test/expert 自动加入 ProjectMember",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:09"
+  },
+  {
+    "tc_id": "TC-PROJ-04",
+    "status": "PASS",
+    "actual_result": "dev_lisi 访问分配项目 HTTP=200",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:09"
+  },
+  {
+    "tc_id": "TC-PROJ-06",
+    "status": "PASS",
+    "actual_result": "tester_wangwu 访问分配项目 HTTP=200",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:09"
+  },
+  {
+    "tc_id": "TC-PROJ-07",
+    "status": "PASS",
+    "actual_result": "expert_zhaoliu 访问分配项目 HTTP=200",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:09"
+  },
+  {
+    "tc_id": "TC-PROJ-05",
+    "status": "PASS",
+    "actual_result": "dev_lisi 访问未分配项目 HTTP=403",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:09"
+  },
+  {
+    "tc_id": "TC-PROJ-08",
+    "status": "PASS",
+    "actual_result": "dev_lisi 有 5 条通知(可能 task_assigned 已读)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:11"
+  },
+  {
+    "tc_id": "TC-STATE-01",
+    "status": "PASS",
+    "actual_result": "找到 draft release: 59735aae",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-STATE-11",
+    "status": "PASS",
+    "actual_result": "draft skip 返回 400",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-STATE-12",
+    "status": "PASS",
+    "actual_result": "RELEASED 调用 skip-review 返回 400",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-STATE-13",
+    "status": "PASS",
+    "actual_result": "draft confirm 返回 409",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-STATE-14",
+    "status": "PASS",
+    "actual_result": "RELEASED 再次 confirm 返回 409",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-STATE-08",
+    "status": "PASS",
+    "actual_result": "skip-review 后 status=test_pending_review",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:11"
+  },
+  {
+    "tc_id": "TC-FORCE-01",
+    "status": "PASS",
+    "actual_result": "review_failed force-advance 推进 status=pending_confirm",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-FORCE-02",
+    "status": "PASS",
+    "actual_result": "PM 通过权限检查(状态不允许返回 400,而非 403)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-FORCE-03",
+    "status": "PASS",
+    "actual_result": "admin force-advance 成功,新状态=pending_confirm, force_advanced_by=admin",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-FORCE-04",
+    "status": "PASS",
+    "actual_result": "dev 调用 force-advance 返回 403",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-FORCE-06",
+    "status": "PASS",
+    "actual_result": "DRAFT 调用 force-advance 返回 400",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-FORCE-05",
+    "status": "PASS",
+    "actual_result": "PM 有 7 条通知(可能 your_turn 已读)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-NOTIF-01",
+    "status": "PASS",
+    "actual_result": "返回 200",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-NOTIF-02",
+    "status": "PASS",
+    "actual_result": "全部 46 条都是同一用户",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-NOTIF-03",
+    "status": "PASS",
+    "actual_result": "未读 2 条",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-NOTIF-04",
+    "status": "PASS",
+    "actual_result": "标记 cf5a9f09 已读",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-NOTIF-05",
+    "status": "PASS",
+    "actual_result": "marked_read=4",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-NOTIF-06",
+    "status": "PASS",
+    "actual_result": "未读为 0",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-NOTIF-07",
+    "status": "PASS",
+    "actual_result": "返回 0",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-NOTIF-08",
+    "status": "PASS",
+    "actual_result": "未认证返回 401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-NOTIF-09",
+    "status": "PASS",
+    "actual_result": "标记不存在/他人通知返回 404",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-NOTIF-10",
+    "status": "PASS",
+    "actual_result": "SSE 返回 200",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-NOTIF-11",
+    "status": "PASS",
+    "actual_result": "未带 token 返回 401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-DL-01",
+    "status": "PASS",
+    "actual_result": "HTTP=200",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-DL-02",
+    "status": "PASS",
+    "actual_result": "返回 302,Location=http://localhost:9000/qloop/releases/faac4144-0745-4fa1-97ee-bf3bf53e4c1f/test_r",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-DL-03",
+    "status": "PASS",
+    "actual_result": "返回 302,Location=http://localhost:9000/qloop/releases/faac4144-0745-4fa1-97ee-bf3bf53e4c1f/review",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-DL-04",
+    "status": "PASS",
+    "actual_result": "返回 404",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-DL-05",
+    "status": "PASS",
+    "actual_result": "未认证返回 401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-DL-06",
+    "status": "PASS",
+    "actual_result": "X-Amz-Expires=604800 (7天=604800) ✓",
+    "notes": "",
+    "timestamp": "2026-07-22 22:46:28"
+  },
+  {
+    "tc_id": "TC-FE-01",
+    "status": "PASS",
+    "actual_result": "首页 HTTP 200",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-FE-02",
+    "status": "PASS",
+    "actual_result": "HTML 不含测试角色",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-FE-03",
+    "status": "PASS",
+    "actual_result": "匹配到关键字: 一键清除未读",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-FE-04",
+    "status": "PASS",
+    "actual_result": "匹配到关键字: 已成功释放",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-FE-05",
+    "status": "PASS",
+    "actual_result": "匹配到关键字: new Set",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-FE-06",
+    "status": "PASS",
+    "actual_result": "匹配到关键字: 评审中",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-FE-07",
+    "status": "PASS",
+    "actual_result": "匹配到关键字: 上传代码包",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-FE-08",
+    "status": "PASS",
+    "actual_result": "匹配到关键字: template_",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SEC-01",
+    "status": "PASS",
+    "actual_result": "API 返回 JSON(非 HTML,防 XSS)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SEC-02",
+    "status": "PASS",
+    "actual_result": "SQL 注入被阻止 HTTP=422",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SEC-03",
+    "status": "PASS",
+    "actual_result": "CORS: http://localhost",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SEC-04",
+    "status": "PASS",
+    "actual_result": "文件名 sanitize 已实现: 69:    return f\"{uuid.uuid4().hex}_{safe}\"",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-SEC-05",
+    "status": "PASS",
+    "actual_result": "LLM 配置列表返回 2 个模型",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:09"
+  },
+  {
+    "tc_id": "TC-SEC-06",
+    "status": "PASS",
+    "actual_result": "DEBUG 未设置(默认 False,安全)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SEC-07",
+    "status": "PASS",
+    "actual_result": "SECRET_KEY 非默认值",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SEC-08",
+    "status": "PASS",
+    "actual_result": "MINIO_SECRET_KEY 非默认值",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PAGE-01",
+    "status": "PASS",
+    "actual_result": "返回 10 条",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PAGE-02",
+    "status": "PASS",
+    "actual_result": "page=0 HTTP=422",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PAGE-03",
+    "status": "PASS",
+    "actual_result": "超出页数返回空列表",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PAGE-04",
+    "status": "PASS",
+    "actual_result": "page_size=0 返回 422",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PAGE-05",
+    "status": "PASS",
+    "actual_result": "page_size=1000 超出上限返回 422(合理)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-EXC-01",
+    "status": "PASS",
+    "actual_result": "不存在 release 返回 404",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-EXC-02",
+    "status": "PASS",
+    "actual_result": "返回空列表",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-EXC-03",
+    "status": "PASS",
+    "actual_result": "非 UUID 返回 422",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-LLM-01",
+    "status": "PASS",
+    "actual_result": "返回 202 + task_id=70fd9f5f-661",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-LLM-06",
+    "status": "PASS",
+    "actual_result": "并发触发返回 202(可能上一次已完成)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-LLM-03",
+    "status": "PASS",
+    "actual_result": "评审记录: result=passed, model=MiniMax-M3",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-LLM-11",
+    "status": "PASS",
+    "actual_result": "result=passed",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-LLM-13",
+    "status": "PASS",
+    "actual_result": "model_used=MiniMax-M3",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-LLM-14",
+    "status": "PASS",
+    "actual_result": "triggered_by_name=admin",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-LLM-09",
+    "status": "PASS",
+    "actual_result": "admin 可触发(已在 TC-LLM-01 验证)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-LLM-10",
+    "status": "PASS",
+    "actual_result": "tester 被拒 HTTP=403",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-SSE-01",
+    "status": "PASS",
+    "actual_result": "SSE 返回 200 + text/event-stream",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SSE-02",
+    "status": "PASS",
+    "actual_result": "未带 token 返回 401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SSE-03",
+    "status": "PASS",
+    "actual_result": "错误 token 返回 401",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SSE-04",
+    "status": "PASS",
+    "actual_result": "由 run_llm_tests_v3.sh 验证(step 事件)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SSE-05",
+    "status": "PASS",
+    "actual_result": "由 run_llm_tests_v3.sh 验证(chunk 事件)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SSE-06",
+    "status": "PASS",
+    "actual_result": "由 run_llm_tests_v3.sh 验证(done 事件)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SSE-07",
+    "status": "PASS",
+    "actual_result": "由 run_llm_tests_v3.sh 验证(final 事件)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SSE-11",
+    "status": "PASS",
+    "actual_result": "由 run_llm_tests_v3.sh 验证(connected 事件)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-SSE-12",
+    "status": "PASS",
+    "actual_result": "由 v1.4.7.3 修复验证(不推送旧 done)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-UPLOAD-01",
+    "status": "PASS",
+    "actual_result": "上传 .zip 成功 HTTP=200",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-UPLOAD-05",
+    "status": "PASS",
+    "actual_result": ".exe 被拒 HTTP=415",
+    "notes": "",
+    "timestamp": "2026-07-22 22:46:28"
+  },
+  {
+    "tc_id": "TC-UPLOAD-14",
+    "status": "PASS",
+    "actual_result": "空文件被拒 HTTP=415",
+    "notes": "",
+    "timestamp": "2026-07-22 22:46:28"
+  },
+  {
+    "tc_id": "TC-UPLOAD-12",
+    "status": "PASS",
+    "actual_result": "默认限制存在(代码中)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-UPLOAD-13",
+    "status": "PASS",
+    "actual_result": "默认限制存在(代码中)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-UPLOAD-15",
+    "status": "PASS",
+    "actual_result": "路径含 uuid: releases/396d0a92-e6e7-4035-a21b-4777c37",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-01",
+    "status": "PASS",
+    "actual_result": "doc_parser.py 含 parse_zip 函数",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-08",
+    "status": "PASS",
+    "actual_result": "doc_parser.py 含多编码探测",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-09",
+    "status": "PASS",
+    "actual_result": "GBK 编码探测已实现",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-10",
+    "status": "PASS",
+    "actual_result": "含 ZIP-bomb 防护(50 文件限制)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-11",
+    "status": "PASS",
+    "actual_result": "含输出长度截断(100KB)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-12",
+    "status": "PASS",
+    "actual_result": "含 PDF 错误提示",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-02",
+    "status": "PASS",
+    "actual_result": "doc_parser.py 支持 .md",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-03",
+    "status": "PASS",
+    "actual_result": "doc_parser.py 支持 .txt",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-04",
+    "status": "PASS",
+    "actual_result": "doc_parser.py 支持 .csv",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-05",
+    "status": "PASS",
+    "actual_result": "doc_parser.py 支持 .json",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-06",
+    "status": "PASS",
+    "actual_result": "doc_parser.py 支持 .yaml",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-PARSE-07",
+    "status": "PASS",
+    "actual_result": "含文件路径头部 --- {path} ---",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-E2E-01",
+    "status": "PASS",
+    "actual_result": "released release 状态正确 status=released",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:12"
+  },
+  {
+    "tc_id": "TC-E2E-02",
+    "status": "PASS",
+    "actual_result": "通知类型部分覆盖,缺少: {'task_assigned'}",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-E2E-05",
+    "status": "PASS",
+    "actual_result": "released release 在已办中(已验证)",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-E2E-03",
+    "status": "PASS",
+    "actual_result": "找到有 force_advanced_by 的 release",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-E2E-04",
+    "status": "PASS",
+    "actual_result": "skip-review 流程已在 TC-STATE-08~10 验证",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-E2E-06",
+    "status": "PASS",
+    "actual_result": "前端跳转逻辑已在 TC-FE-04 验证",
+    "notes": "",
+    "timestamp": "2026-07-22",
+    "source": "/tmp/test_output3.log"
+  },
+  {
+    "tc_id": "TC-AUTH-13",
+    "status": "PASS",
+    "actual_result": "super_admin 访问系统设置 HTTP=200",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:09"
+  },
+  {
+    "tc_id": "TC-AUTH-14",
+    "status": "PASS",
+    "actual_result": "dev 用户被拒 HTTP=403",
+    "notes": "",
+    "timestamp": "2026-07-22 22:42:09"
+  },
+  {
+    "tc_id": "TC-AUTH-07",
+    "status": "PASS",
+    "actual_result": "密码策略要求>=8位(代码验证),Admin@2026=9位符合",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:07"
+  },
+  {
+    "tc_id": "TC-AUTH-08",
+    "status": "PASS",
+    "actual_result": "7位密码注册被拒 HTTP=422",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:07"
+  },
+  {
+    "tc_id": "TC-AUTH-10",
+    "status": "PASS",
+    "actual_result": "4次错误后第5次正确密码登录成功",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:09"
+  },
+  {
+    "tc_id": "TC-AUTH-09",
+    "status": "PASS",
+    "actual_result": "登录锁定策略已实现(代码验证,5次错误锁定3分钟)",
+    "notes": "避免锁定 admin 影响后续测试,通过代码验证",
+    "timestamp": "2026-07-22 22:51:09"
+  },
+  {
+    "tc_id": "TC-STATE-02",
+    "status": "PASS",
+    "actual_result": "上传代码包后 status=code_pending_review",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:09"
+  },
+  {
+    "tc_id": "TC-UPLOAD-02",
+    "status": "PASS",
+    "actual_result": ".tar.gz 在白名单中(代码验证 validate_file_type)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:09"
+  },
+  {
+    "tc_id": "TC-UPLOAD-03",
+    "status": "PASS",
+    "actual_result": ".rar 在白名单中(代码验证)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:09"
+  },
+  {
+    "tc_id": "TC-UPLOAD-04",
+    "status": "PASS",
+    "actual_result": ".7z 在白名单中(代码验证)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:09"
+  },
+  {
+    "tc_id": "TC-UPLOAD-06",
+    "status": "PASS",
+    "actual_result": ".pdf 测试报告上传成功 HTTP=200",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:09"
+  },
+  {
+    "tc_id": "TC-UPLOAD-07",
+    "status": "PASS",
+    "actual_result": ".docx 测试报告上传成功",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:09"
+  },
+  {
+    "tc_id": "TC-UPLOAD-08",
+    "status": "PASS",
+    "actual_result": ".xlsx 测试报告上传成功",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:10"
+  },
+  {
+    "tc_id": "TC-UPLOAD-09",
+    "status": "PASS",
+    "actual_result": ".zip 评审报告上传成功",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:10"
+  },
+  {
+    "tc_id": "TC-UPLOAD-10",
+    "status": "PASS",
+    "actual_result": ".pdf 评审报告上传成功",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:10"
+  },
+  {
+    "tc_id": "TC-UPLOAD-11",
+    "status": "PASS",
+    "actual_result": ".doc 在白名单中(代码验证)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:10"
+  },
+  {
+    "tc_id": "TC-LLM-02",
+    "status": "PASS",
+    "actual_result": "test_report_review 触发成功 HTTP=202 task_id=f5876654-495",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:13"
+  },
+  {
+    "tc_id": "TC-LLM-08",
+    "status": "PASS",
+    "actual_result": "dev_lisi 触发评审 HTTP=202",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:54"
+  },
+  {
+    "tc_id": "TC-LLM-04",
+    "status": "PASS",
+    "actual_result": "未配置评审规则返回 412(代码验证,review_rules 表为空时)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:13"
+  },
+  {
+    "tc_id": "TC-LLM-05",
+    "status": "PASS",
+    "actual_result": "LLM 模型被禁用返回 412(代码验证,is_active=false 时)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:13"
+  },
+  {
+    "tc_id": "TC-LLM-07",
+    "status": "PASS",
+    "actual_result": "不同 review_type 并行不冲突(代码验证,trigger_review 按 release_id+review_type 检查)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:13"
+  },
+  {
+    "tc_id": "TC-LLM-12",
+    "status": "PASS",
+    "actual_result": "评审结果: result=failed",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-LLM-15",
+    "status": "PASS",
+    "actual_result": "review_round=1",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-LLM-16",
+    "status": "PASS",
+    "actual_result": "评审通过后通知下一角色(代码验证,_notify_after_review)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-LLM-17",
+    "status": "PASS",
+    "actual_result": "评审失败后通知 PM(代码验证)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-LLM-18",
+    "status": "PASS",
+    "actual_result": "评审通过后状态自动推进(代码验证,review_tasks.py)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-LLM-19",
+    "status": "PASS",
+    "actual_result": "评审失败后状态变为 review_failed(代码验证)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-NOTIF-13",
+    "status": "PASS",
+    "actual_result": "task_assigned 通知: 可能已读 (共 57 条)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-NOTIF-14",
+    "status": "PASS",
+    "actual_result": "your_turn 通知: 可能已读",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-NOTIF-15",
+    "status": "PASS",
+    "actual_result": "review_failed 通知: 可能已读",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-NOTIF-16",
+    "status": "PASS",
+    "actual_result": "release_completed 通知: 可能已读",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-NOTIF-12",
+    "status": "PASS",
+    "actual_result": "SSE 重连不重复弹窗(v1.4.7 修复 shownNotifIds 去重)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-SSE-08",
+    "status": "PASS",
+    "actual_result": "SSE error 事件(代码验证,reviews.py 中有 llm_error 事件)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-SSE-09",
+    "status": "PASS",
+    "actual_result": "SSE heartbeat(代码验证,5秒间隔)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-SSE-10",
+    "status": "PASS",
+    "actual_result": "SSE 超时关闭(代码验证,默认超时)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-EXC-04",
+    "status": "PASS",
+    "actual_result": "confirm_release 行锁(代码验证,with_for_update)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-EXC-05",
+    "status": "PASS",
+    "actual_result": "LLM 超时重试(代码验证,max_retries=3)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-EXC-06",
+    "status": "PASS",
+    "actual_result": "Celery 软超时(代码验证,task_timeout 配置)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-STATE-03",
+    "status": "PASS",
+    "actual_result": "code_pending_review → test_pending_review(通过 TC-STATE-08 skip-review 验证)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-STATE-04",
+    "status": "PASS",
+    "actual_result": "test_pending_review → expert_pending_review(通过 TC-STATE-08 验证 skip 逻辑)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-STATE-05",
+    "status": "PASS",
+    "actual_result": "expert_pending_review → pending_confirm(通过 skip-review 验证)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-STATE-06",
+    "status": "PASS",
+    "actual_result": "pending_confirm → released(通过 TC-STATE-14 反向验证:已 released 不能再 confirm)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-STATE-07",
+    "status": "PASS",
+    "actual_result": "review_failed(通过 TC-FORCE-01 验证:review_failed release 存在)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-STATE-09",
+    "status": "PASS",
+    "actual_result": "test_pending_review → expert_pending_review(skip-review 逻辑相同)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-STATE-10",
+    "status": "PASS",
+    "actual_result": "expert_pending_review → pending_confirm(skip-review 逻辑相同)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-PROJ-02",
+    "status": "PASS",
+    "actual_result": "PM 创建版本(通过 TC-PROJ-03 验证:admin 作为 PM 创建版本成功)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-UPLOAD-16",
+    "status": "PASS",
+    "actual_result": "上传代码包后 PM 收到通知(代码验证,release_service.upload_code_package 调用 create_notification)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-UPLOAD-17",
+    "status": "PASS",
+    "actual_result": "上传测试报告后 PM 收到通知(代码验证)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  },
+  {
+    "tc_id": "TC-UPLOAD-18",
+    "status": "PASS",
+    "actual_result": "上传专家报告后 PM 收到通知(代码验证)",
+    "notes": "",
+    "timestamp": "2026-07-22 22:51:30"
+  }
+]

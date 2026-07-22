@@ -189,6 +189,10 @@ async def upload_code_package(
     if release is None:
         return None
 
+    # 空文件检查(P1-4)
+    if not file_data:
+        raise ValueError("文件内容为空,请上传有效的文件")
+
     # 校验文件类型(白名单,P1-2)
     if not validate_file_type('code_package', file_name):
         raise ValueError(
@@ -256,6 +260,10 @@ async def upload_test_report(
     if release is None:
         return None
 
+    # 空文件检查(P1-4)
+    if not file_data:
+        raise ValueError("文件内容为空,请上传有效的文件")
+
     # 校验文件类型(白名单,P1-2)
     if not validate_file_type('test_report', file_name):
         raise ValueError(
@@ -320,6 +328,10 @@ async def upload_review_report(
     release = await get_release_by_id(db, release_id)
     if release is None:
         return None
+
+    # 空文件检查(P1-4)
+    if not file_data:
+        raise ValueError("文件内容为空,请上传有效的文件")
 
     # 校验文件类型(白名单,P1-2)
     if not validate_file_type('review_report', file_name):

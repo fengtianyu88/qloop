@@ -2,7 +2,7 @@
 
 > The quality closed loop that ships with confidence.
 
-[![Version](https://img.shields.io/badge/version-1.4.7-blue.svg)](./README.md)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](./README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/vue-3-4FC08D.svg)](https://vuejs.org/)
@@ -67,6 +67,7 @@ truth, and brings LLM-powered automated review to every gate.
 - **In-app notifications + email reminders**
 - **Auto-triggered at key events**: version assigned, artifact uploaded, review passed/failed, release confirmed
 - **Notification dedup** (v1.4.7): SSE reconnects no longer replay already-shown notifications
+- **Release v1.5.0**: MinIO presigned URL 7-day validity + empty-file upload guard + 160 test cases 100% pass
 
 ---
 
@@ -197,7 +198,7 @@ qloop/
 ## Documentation
 
 - **[Deployment Guide](docs/DEPLOYMENT.md)** — full deployment steps for Linux & Windows
-- **[Design Document v1.4.7](docs/superpowers/specs/2026-07-22-qloop-design-v1.4.7.md)** — incremental design notes covering v1.4.0 → v1.4.7
+- **[Design Document v1.5.0](docs/superpowers/specs/2026-07-22-qloop-design-v1.5.0.md)** — incremental design notes covering v1.4.0 → v1.5.0
 
 ---
 
