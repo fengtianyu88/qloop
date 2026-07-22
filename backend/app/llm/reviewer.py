@@ -239,6 +239,7 @@ async def execute_review(
     release_id: uuid.UUID,
     review_type: ReviewType,
     triggered_by: uuid.UUID,
+    progress_callback=None,
 ) -> LLMReview:
     """Execute a single LLM review for a release.
 
@@ -286,11 +287,22 @@ async def execute_review(
     await db.commit()
     await db.refresh(review)
 
+    async def _emit(event_type: str, payload: str) -> None:
+        """通过 progress_callback 推送步骤事件到 Redis pub/sub → SSE → 前端。"""
+        if progress_callback:
+            try:
+                await progress_callback(event_type, payload)
+            except Exception:  # noqa: BLE001
+                pass
+
     try:
         # 4. Prepare the review content.
+        await _emit("step", "读取交付物文件...")
         content = await _prepare_review_content(release, review_type)
+        await _emit("step", f"读取文件成功(共 {len(content)} 字符)")
 
         # 5. Render the prompt.
+        await _emit("step", "渲染评审提示词...")
         prompt_template = rule.prompt_template or PROMPT_MAP.get(review_type.value, "")
         if not prompt_template:
             raise ValueError(
@@ -298,22 +310,32 @@ async def execute_review(
                 f"'{review_type.value}'"
             )
         prompt = prompt_template.replace("{content}", content)
+        await _emit("step", "提示词准备完成")
 
         # 6. Call the LLM (primary + optional fallback).
         fallback_model: Optional[LLMModel] = rule.fallback_model
         if fallback_model is not None and not fallback_model.is_active:
             fallback_model = None
-
+        model_name = rule.llm_model.model_name if rule.llm_model else "未知"
+        await _emit("step", f"连接 LLM({model_name})...")
+        await _emit("step", "LLM 连接成功,等待流式返回...")
         llm_response: LLMResponse = await call_llm_with_fallback(
             primary_model=rule.llm_model,
             fallback_model=fallback_model,
             prompt=prompt,
+            progress_callback=progress_callback,
         )
+        if llm_response.success:
+            await _emit("step", f"LLM 返回成功({llm_response.model_used}, {len(llm_response.content or '')} 字符)")
+        else:
+            await _emit("step", f"LLM 调用失败: {llm_response.error}")
 
         # 7. Parse the result.
+        await _emit("step", "解析评审结果...")
         parsed = parse_llm_review_result(
             llm_response.content if llm_response.success else None
         )
+        await _emit("step", "解析完成")
 
         # 8. Update the review record.
         review.total_score = float(parsed.get("total_score", 0) or 0)
@@ -330,12 +352,14 @@ async def execute_review(
 
         if passed:
             review.result = ReviewResult.PASSED
+            await _emit("step", f"评审通过!总分: {review.total_score}")
             # 10a. Advance the release status.
             next_status = _PASS_STATUS_TRANSITIONS.get(review_type)
             if next_status is not None:
                 release.status = next_status
         else:
             review.result = ReviewResult.FAILED
+            await _emit("step", f"评审未通过,总分: {review.total_score}")
             # 10b. Fail the release.
             release.status = ReleaseStatus.REVIEW_FAILED
 

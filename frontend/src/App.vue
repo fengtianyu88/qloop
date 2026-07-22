@@ -11,6 +11,10 @@ const notificationStore = useNotificationStore()
 // 功能5: SSE 连接实例
 let notifEventSource: EventSource | null = null
 
+// 已弹出过的通知 ID 去重(避免 SSE 重连重放未读通知导致重复弹窗)
+const shownNotifIds = new Set<string>()
+const MAX_SHOWN_IDS = 200
+
 // 功能5: 启动 SSE 通知流
 function startNotificationStream() {
   stopNotificationStream()
@@ -33,6 +37,19 @@ function startNotificationStream() {
       return  // 忽略无法解析的消息
     }
     if (notif.error) return  // 错误事件静默处理
+    // 去重:同一条通知不重复弹出(SSE 重连重放未读通知时跳过)
+    const notifId = String(notif.id ?? '')
+    if (notifId && shownNotifIds.has(notifId)) {
+      return
+    }
+    if (notifId) {
+      shownNotifIds.add(notifId)
+      // 限制 Set 大小,避免长时间运行后无限增长
+      if (shownNotifIds.size > MAX_SHOWN_IDS) {
+        const first = shownNotifIds.values().next().value
+        if (first) shownNotifIds.delete(first)
+      }
+    }
     // 弹出桌面通知
     const typeMap: Record<string, 'success' | 'warning' | 'info' | 'error'> = {
       review_failed: 'error',

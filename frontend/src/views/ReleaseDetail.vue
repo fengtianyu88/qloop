@@ -86,6 +86,7 @@ let reviewElapsedTimer: ReturnType<typeof setInterval> | null = null
 let reviewHeartbeatTimer: ReturnType<typeof setInterval> | null = null
 const reviewLastLogAt = ref<number | null>(null)  // 上次产生日志的时间戳
 let lastLoggedStepKey = ''  // 上次记录日志的步骤标识(review_type + review_round + result)
+const reviewStreamText = ref('')  // LLM 流式返回的文字(实时累积)
 
 // 添加进度日志
 function addProgressLog(msg: string, type: 'info'|'success'|'warning'|'error' = 'info') {
@@ -103,6 +104,7 @@ function addProgressLog(msg: string, type: 'info'|'success'|'warning'|'error' = 
 // 清空评审日志
 function clearReviewLogs() {
   reviewProgressLogs.value = []
+  reviewStreamText.value = ''
 }
 
 // 导出评审日志为 .txt 文件
@@ -248,37 +250,64 @@ function startSSEStream() {
     } catch {
       return  // 忽略无法解析的消息(如心跳注释不会触发 onmessage)
     }
-    if (data.error) {
-      addProgressLog(`SSE 错误:${data.error}`, 'error')
-      stopSSEStream()
-      return
-    }
-    const label = reviewTypeLabel(data.review_type as ReviewType) || data.review_type
-    const stepKey = `${data.review_type}|${data.review_round}|${data.result}`
-    if (data.result === 'pending') {
-      reviewCurrentStatus.value = 'running'
-      reviewCurrentStep.value = `${label} · 第 ${data.review_round} 轮`
-      if (stepKey !== lastLoggedStepKey) {
-        lastLoggedStepKey = stepKey
-        addProgressLog(`[${reviewCurrentStep.value}] SSE:LLM 正在分析...`, 'info')
+    const evtType = data.type
+    const payload = data.payload || ''
+    switch (evtType) {
+      case 'step':
+        // 步骤状态事件(读取文件成功、LLM 连接成功等)
+        addProgressLog(payload, 'info')
+        break
+      case 'chunk':
+        // LLM 流式返回的文字片段,实时追加到流式输出区
+        reviewStreamText.value += payload
+        reviewLastLogAt.value = Date.now()
+        nextTick(() => {
+          const el = document.querySelector('.review-stream-text')
+          if (el) el.scrollTop = el.scrollHeight
+        })
+        break
+      case 'done':
+        // 评审完成事件(来自 Celery review_tasks)
+        reviewCurrentStatus.value = data.result === 'passed' ? 'passed' : 'failed'
+        addProgressLog(
+          `评审完成:结果=${data.result},分数=${data.total_score ?? '—'}`,
+          data.result === 'passed' ? 'success' : 'warning',
+        )
+        stopSSEStream()
+        break
+      case 'final': {
+        // 最终评审记录(SSE 接口查数据库后推送)
+        const label = reviewTypeLabel(data.review_type as ReviewType) || data.review_type
+        if (data.result === 'passed') {
+          reviewCurrentStatus.value = 'passed'
+          reviewCurrentStep.value = `${label} · 已通过`
+          addProgressLog(`评审通过!总分:${data.total_score}`, 'success')
+          if (data.conclusion) addProgressLog(`结论:${data.conclusion}`, 'info')
+        } else if (data.result === 'failed') {
+          reviewCurrentStatus.value = 'failed'
+          reviewCurrentStep.value = `${label} · 未通过`
+          addProgressLog(`评审未通过,总分:${data.total_score}`, 'warning')
+          if (data.suggestions) addProgressLog(`建议:${data.suggestions}`, 'info')
+        } else if (data.result === 'error') {
+          reviewCurrentStatus.value = 'error'
+          reviewCurrentStep.value = `${label} · 出错`
+          addProgressLog('评审出错,请查看评审记录', 'error')
+        }
+        stopSSEStream()
+        break
       }
-    } else if (data.result === 'passed') {
-      reviewCurrentStatus.value = 'passed'
-      reviewCurrentStep.value = `${label} · 已通过`
-      addProgressLog(`SSE:评审通过!总分:${data.total_score ?? '—'}`, 'success')
-      if (data.conclusion) addProgressLog(`结论:${data.conclusion}`, 'info')
-      stopSSEStream()
-    } else if (data.result === 'failed') {
-      reviewCurrentStatus.value = 'failed'
-      reviewCurrentStep.value = `${label} · 未通过`
-      addProgressLog(`SSE:评审未通过,总分:${data.total_score ?? '—'}`, 'warning')
-      if (data.suggestions) addProgressLog(`建议:${data.suggestions}`, 'info')
-      stopSSEStream()
-    } else if (data.result === 'error') {
-      reviewCurrentStatus.value = 'error'
-      reviewCurrentStep.value = `${label} · 出错`
-      addProgressLog(`SSE:评审出错,请查看评审记录`, 'error')
-      stopSSEStream()
+      case 'error':
+        reviewCurrentStatus.value = 'error'
+        addProgressLog(`评审错误:${payload}`, 'error')
+        stopSSEStream()
+        break
+      case 'timeout':
+        addProgressLog('SSE 连接超时(5分钟无事件)', 'warning')
+        stopSSEStream()
+        break
+      default:
+        // 未知事件类型,记录原始 payload
+        if (payload) addProgressLog(payload, 'info')
     }
   }
 
@@ -460,6 +489,7 @@ async function handleTriggerReview() {
     addProgressLog(`已触发${reviewTypeLabel(triggerReviewType.value)}评审`, 'info')
     reviewCurrentStatus.value = 'running'
     reviewCurrentStep.value = `${reviewTypeLabel(triggerReviewType.value)} · 第 1 轮`
+    startSSEStream()
     startReviewPolling()
   } catch (e: any) {
     const status = e?.response?.status
@@ -1166,6 +1196,7 @@ onMounted(async () => {
     const latest = reviews.value[0]
     const label = reviewTypeLabel(latest.review_type as ReviewType) || latest.review_type
     reviewCurrentStep.value = `${label} · 第 ${latest.review_round} 轮`
+    startSSEStream()
     startReviewPolling()
   }
 })
@@ -1969,6 +2000,18 @@ onMounted(async () => {
             </div>
           </div>
 
+          <!-- LLM 流式返回文字(实时累积,chunk 事件追加) -->
+          <div class="review-stream-section" v-if="reviewStreamText || reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering'">
+            <div class="review-stream-header">
+              <span>LLM 流式输出</span>
+              <span class="review-stream-hint" v-if="reviewCurrentStatus === 'running' || reviewCurrentStatus === 'triggering'">
+                <el-icon class="is-loading" size="12"><Loading /></el-icon>
+                接收中...
+              </span>
+            </div>
+            <div class="review-stream-text" v-text="reviewStreamText || '等待 LLM 流式返回...'"></div>
+          </div>
+
           <div class="review-log-header">
             <span>实时日志</span>
             <div class="review-log-actions">
@@ -2287,6 +2330,43 @@ onMounted(async () => {
 .step-hint.success { color: #67c23a; }
 .step-hint.warning { color: #e6a23c; }
 .step-hint.error { color: #f56c6c; }
+
+/* LLM 流式输出区域 */
+.review-stream-section {
+  margin: 8px 12px 0;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  background: #0d1117;
+  overflow: hidden;
+}
+.review-stream-header {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #8b949e;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.review-stream-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #58a6ff;
+  font-size: 11px;
+}
+.review-stream-text {
+  padding: 10px 12px;
+  max-height: 280px;
+  overflow-y: auto;
+  font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #c9d1d9;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 .review-log-header {
   padding: 8px 16px 4px;

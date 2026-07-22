@@ -28,6 +28,7 @@ from app.dependencies import get_current_user, get_current_user_sse, require_rol
 from app.models.project import Release, Version
 from app.models.review import LLMModel, LLMReview, ReviewRule, ReviewType
 from app.models.user import SystemRole, User
+from app.redis_client import get_redis
 from app.schemas.review import LLMReviewResponse
 from app.services.audit_service import create_audit_log
 from app.services.permission_service import check_project_access
@@ -233,52 +234,108 @@ async def stream_review_progress(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user_sse),
 ):
-    """SSE 端点:推送指定 release 的最新评审进度。
+    """SSE 端点:推送指定 release 的实时评审进度。
 
-    前端用 EventSource 接收,每 2 秒查询一次最新评审状态并推送;
-    当评审进入终态(passed/failed/error)时关闭流。
-    认证通过 query 参数 ?token=xxx 传递(EventSource 不支持自定义 header)。
+    订阅 Redis pub/sub channel ``review_stream:{release_id}``,
+    把 Celery 评审任务通过 progress_callback 推送的步骤事件(step)和
+    LLM 流式 chunk 实时转发给前端 EventSource。
+
+    启动时先查数据库:如果评审已终态则直接返回最终状态;
+    否则订阅 Redis channel 等待实时事件;
+    收到 done/error 终态事件后查数据库推送最终评审记录并关闭流;
+    5 分钟无事件自动关闭(防泄漏)。
     """
+    async def _build_review_data(review: LLMReview, evt_type: str = "done") -> dict:
+        result_str = review.result.value if hasattr(review.result, "value") else str(review.result)
+        review_type_str = review.review_type.value if hasattr(review.review_type, "value") else str(review.review_type)
+        return {
+            "type": evt_type,
+            "result": result_str,
+            "review_id": str(review.id),
+            "review_type": review_type_str,
+            "review_round": review.review_round,
+            "total_score": review.total_score,
+            "conclusion": review.conclusion,
+            "suggestions": review.suggestions,
+            "model_used": review.model_used,
+        }
+
     async def event_generator():
-        while True:
-            try:
-                result = await db.execute(
-                    select(LLMReview)
-                    .where(LLMReview.release_id == release_id)
-                    .order_by(LLMReview.created_at.desc())
-                    .limit(1)
+        # 1. 先查数据库:如果评审已终态,直接返回最终状态并关闭
+        try:
+            result = await db.execute(
+                select(LLMReview)
+                .where(LLMReview.release_id == release_id)
+                .order_by(LLMReview.created_at.desc())
+                .limit(1)
+            )
+            review = result.scalar_one_or_none()
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'payload': str(exc)}, ensure_ascii=False)}\n\n"
+            return
+
+        if review:
+            result_str = review.result.value if hasattr(review.result, "value") else str(review.result)
+            if result_str in ("passed", "failed", "error"):
+                data = await _build_review_data(review, "done")
+                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                return
+
+        # 2. 订阅 Redis pub/sub channel 等待实时事件
+        channel = f"review_stream:{release_id}"
+        try:
+            redis = await get_redis()
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'payload': f'Redis 连接失败: {exc}'}, ensure_ascii=False)}\n\n"
+            return
+
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(channel)
+        idle_seconds = 0
+        try:
+            while True:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0
                 )
-                review = result.scalar_one_or_none()
-            except Exception as exc:  # 数据库异常不应中断流,推送错误事件后退出
-                err = {"error": str(exc)}
-                yield f"data: {json.dumps(err)}\n\n"
-                break
+                if message and message["type"] == "message":
+                    idle_seconds = 0
+                    data = message["data"]
+                    if isinstance(data, bytes):
+                        data = data.decode("utf-8")
+                    yield f"data: {data}\n\n"
 
-            if review:
-                # result 枚举转字符串,便于前端处理
-                result_str = review.result.value if hasattr(review.result, "value") else str(review.result)
-                review_type_str = review.review_type.value if hasattr(review.review_type, "value") else str(review.review_type)
-                data = {
-                    "review_id": str(review.id),
-                    "result": result_str,
-                    "review_type": review_type_str,
-                    "review_round": review.review_round,
-                    "total_score": review.total_score,
-                    "conclusion": review.conclusion,
-                    "suggestions": review.suggestions,
-                    "model_used": review.model_used,
-                    "created_at": review.created_at.isoformat() if review.created_at else None,
-                    "completed_at": review.completed_at.isoformat() if review.completed_at else None,
-                }
-                yield f"data: {json.dumps(data)}\n\n"
-
-                # 终态:关闭流
-                if result_str in ("passed", "failed", "error"):
-                    break
-
-            # 心跳注释,保持连接
-            yield ": heartbeat\n\n"
-            await asyncio.sleep(2)
+                    # 检查是否终态事件(done/error),查数据库推送最终结果
+                    try:
+                        evt = json.loads(data)
+                        if evt.get("type") in ("done", "error"):
+                            try:
+                                final_result = await db.execute(
+                                    select(LLMReview)
+                                    .where(LLMReview.release_id == release_id)
+                                    .order_by(LLMReview.created_at.desc())
+                                    .limit(1)
+                                )
+                                final_review = final_result.scalar_one_or_none()
+                                if final_review:
+                                    final_data = await _build_review_data(final_review, "final")
+                                    yield f"data: {json.dumps(final_data, ensure_ascii=False)}\n\n"
+                            except Exception:
+                                pass
+                            break
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+                else:
+                    idle_seconds += 1
+                    if idle_seconds >= 300:
+                        yield f"data: {json.dumps({'type': 'timeout', 'payload': 'SSE 连接超时(5分钟无事件)'}, ensure_ascii=False)}\n\n"
+                        break
+                    yield ": heartbeat\n\n"
+        finally:
+            try:
+                await pubsub.unsubscribe(channel)
+                await pubsub.close()
+            except Exception:
+                pass
 
     return StreamingResponse(
         event_generator(),

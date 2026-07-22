@@ -192,6 +192,101 @@ async def _call_openai(
     return LLMResponse.ok(content=content, model_used=model.model_name)
 
 
+async def _call_openai_stream(
+    model: LLMModel,
+    prompt: str,
+    timeout: int,
+    progress_callback=None,
+) -> LLMResponse:
+    """流式调用 OpenAI 兼容 ``/chat/completions`` 接口。
+
+    通过 ``progress_callback("chunk", delta)`` 把每个流式片段推送给前端,
+    实现"LLM 流式返回文字实时显示"的效果。
+    如果流式过程中出现网络异常但已收到部分内容,返回部分内容(容错);
+    如果完全没有收到内容,返回失败以便上层回退到非流式重试。
+    """
+    try:
+        url = _build_openai_url(model.api_base)
+    except ValueError as exc:
+        return LLMResponse.failure(str(exc), model_used=model.model_name)
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {model.api_key}",
+    }
+    payload = {
+        "model": model.model_name,
+        "messages": [
+            {"role": "system", "content": "你是一位严谨的软件评审专家助手，只输出JSON。"},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.3,
+        "max_tokens": settings.LLM_MAX_TOKENS_OPENAI,
+        "stream": True,
+    }
+
+    content_parts: list[str] = []
+
+    try:
+        timeout_config = httpx.Timeout(connect=10, read=timeout or 300, write=10, pool=10)
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    body_text = body.decode("utf-8", errors="replace")[:500]
+                    return LLMResponse.failure(
+                        f"HTTP {response.status_code}: {body_text}",
+                        model_used=model.model_name,
+                    )
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data: "):
+                        continue
+                    chunk_data = line[6:]
+                    if chunk_data == "[DONE]":
+                        break
+                    try:
+                        chunk_json = json.loads(chunk_data)
+                    except json.JSONDecodeError:
+                        continue
+                    try:
+                        delta = chunk_json["choices"][0]["delta"].get("content", "")
+                    except (KeyError, IndexError, TypeError):
+                        delta = ""
+                    if delta:
+                        content_parts.append(delta)
+                        if progress_callback:
+                            try:
+                                await progress_callback("chunk", delta)
+                            except Exception:  # noqa: BLE001
+                                pass
+    except httpx.TimeoutException:
+        # 流式超时:如果有部分内容,返回部分内容;否则返回失败
+        if content_parts:
+            content = "".join(content_parts)
+            if content.strip():
+                logger.warning("LLM stream timed out but got partial content (%s chars)", len(content))
+                return LLMResponse.ok(content=content, model_used=model.model_name)
+        return LLMResponse.failure(
+            f"Stream timed out after {timeout}s", model_used=model.model_name
+        )
+    except (httpx.HTTPError, ConnectionError) as exc:
+        if content_parts:
+            content = "".join(content_parts)
+            if content.strip():
+                logger.warning("LLM stream error but got partial content: %s", exc)
+                return LLMResponse.ok(content=content, model_used=model.model_name)
+        return LLMResponse.failure(f"HTTP error: {exc}", model_used=model.model_name)
+
+    content = "".join(content_parts)
+    if not content or not content.strip():
+        return LLMResponse.failure(
+            "模型返回空内容,请检查模型名是否正确或上下文是否超限",
+            model_used=model.model_name,
+        )
+    return LLMResponse.ok(content=content, model_used=model.model_name)
+
+
 # ---------------------------------------------------------------------------
 # Anthropic native call (/v1/messages)
 # ---------------------------------------------------------------------------
@@ -308,6 +403,7 @@ async def call_llm(
     model: LLMModel,
     prompt: str,
     timeout: Optional[int] = None,
+    progress_callback=None,
 ) -> LLMResponse:
     """调用 LLM,支持重试。
 
@@ -336,9 +432,21 @@ async def call_llm(
     for attempt in range(max_retries + 1):
         try:
             if model.protocol == LLMProtocol.ANTHROPIC:
+                # Anthropic 暂不支持流式 chunk 推送(协议差异较大)
                 response = await _call_anthropic(model, prompt, timeout)
+            elif progress_callback:
+                # OpenAI 兼容协议 + 有 callback:优先流式,失败回退非流式
+                response = await _call_openai_stream(
+                    model, prompt, timeout, progress_callback
+                )
+                if not response.success:
+                    logger.info(
+                        "LLM 流式调用失败(%s),回退非流式",
+                        response.error,
+                    )
+                    response = await _call_openai(model, prompt, timeout)
             else:
-                # 默认: OpenAI 兼容协议
+                # 默认: OpenAI 兼容协议(非流式)
                 response = await _call_openai(model, prompt, timeout)
 
             # 成功则直接返回
@@ -388,6 +496,7 @@ async def call_llm_with_fallback(
     primary_model: LLMModel,
     fallback_model: Optional[LLMModel],
     prompt: str,
+    progress_callback=None,
 ) -> LLMResponse:
     """Call the primary model, falling back to a secondary on failure.
 
@@ -404,7 +513,7 @@ async def call_llm_with_fallback(
         The :class:`LLMResponse` from the primary model if it succeeded,
         otherwise from the fallback model (which may also be a failure).
     """
-    primary = await call_llm(primary_model, prompt)
+    primary = await call_llm(primary_model, prompt, progress_callback=progress_callback)
     if primary.success:
         return primary
 
@@ -417,6 +526,12 @@ async def call_llm_with_fallback(
         primary.error,
         fallback_model.model_name,
     )
+    # 切换备用模型:推送 step 事件告知前端,fallback 调用不传 callback 避免 chunk 混乱
+    if progress_callback:
+        try:
+            await progress_callback("step", f"主模型失败,切换备用模型({fallback_model.model_name})...")
+        except Exception:  # noqa: BLE001
+            pass
     fallback = await call_llm(fallback_model, prompt)
     if not fallback.success:
         # Annotate the fallback error with the primary error for context.
