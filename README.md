@@ -2,7 +2,7 @@
 
 > English | [简体中文](README_zh-CN.md)
 
-> Version: 1.4.3  Date: 2026-07-22
+> Version: 1.4.6  Date: 2026-07-22
 
 ## About the Name
 
