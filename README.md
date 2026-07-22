@@ -226,12 +226,3 @@ This project is open-sourced under the [MIT License](LICENSE). Any use
 (including commercial) is permitted, provided the copyright notice is retained.
 
 Copyright (c) 2026 fengtianyu88
-
-
----
-
-## Star Trend
-
-<img src="docs/star-trend.svg" alt="Star Trend" width="720">
-
-> Auto-generated from GitHub stargazers data. Re-run `gen_star_trend.py` to refresh.

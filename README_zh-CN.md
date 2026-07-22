@@ -224,12 +224,3 @@ qloop/
 但需保留版权声明。
 
 Copyright (c) 2026 fengtianyu88
-
-
----
-
-## 星标趋势
-
-<img src="docs/star-trend.svg" alt="星标趋势" width="720">
-
-> 根据 GitHub stargazers 数据自动生成。重新运行 `gen_star_trend.py` 可刷新。
