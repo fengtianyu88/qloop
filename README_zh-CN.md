@@ -224,3 +224,10 @@ qloop/
 但需保留版权声明。
 
 Copyright (c) 2026 fengtianyu88
+
+
+---
+
+## 星标趋势
+
+[![星标趋势图](https://api.star-history.com/svg?repos=fengtianyu88/qloop&type=Date)](https://star-history.com/#fengtianyu88/qloop&Date)

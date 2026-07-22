@@ -226,3 +226,10 @@ This project is open-sourced under the [MIT License](LICENSE). Any use
 (including commercial) is permitted, provided the copyright notice is retained.
 
 Copyright (c) 2026 fengtianyu88
+
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=fengtianyu88/qloop&type=Date)](https://star-history.com/#fengtianyu88/qloop&Date)
