@@ -400,7 +400,19 @@ async def confirm_release(
     if release.status != ReleaseStatus.PENDING_CONFIRM:
         raise ValueError("当前状态不允许释放")
 
-    release.status = ReleaseStatus.RELEASED
+    # v1.5.1: 检查是否曾经被特批放行(任何评审阶段被特批)
+    # 如果有特批放行的评审,状态设为 RELEASED_FORCED(已特批释放),否则 RELEASED(已释放)
+    from app.models.review import LLMReview
+    force_passed_count_stmt = select(LLMReview).where(
+        LLMReview.release_id == release_id,
+        LLMReview.force_passed == True,  # noqa: E712
+    )
+    force_passed_reviews = (await db.execute(force_passed_count_stmt)).scalars().all()
+
+    if len(force_passed_reviews) > 0:
+        release.status = ReleaseStatus.RELEASED_FORCED
+    else:
+        release.status = ReleaseStatus.RELEASED
     release.confirmed_by = user_id
     release.confirmed_at = datetime.now(timezone.utc)
 
@@ -674,6 +686,8 @@ async def force_advance(
         raise ValueError("Cannot force-advance a draft release (upload code package first)")
     if release.status == ReleaseStatus.RELEASED:
         raise ValueError("Release is already released")
+    if release.status == ReleaseStatus.RELEASED_FORCED:
+        raise ValueError("Release is already released (forced)")
 
     # 功能7: REVIEW_FAILED 状态下,PM/管理员可特批放行,根据失败阶段决定推进目标
     if release.status == ReleaseStatus.REVIEW_FAILED:
@@ -710,6 +724,13 @@ async def force_advance(
         if forced_by is not None:
             release.force_advanced_by = forced_by
             release.force_advanced_at = datetime.now(timezone.utc)
+
+        # v1.5.1: 标记失败的 LLMReview 为 force_passed=True(特批放行)
+        if failed_review is not None and not failed_review.force_passed:
+            failed_review.force_passed = True
+            failed_review.force_passed_by = forced_by
+            failed_review.force_passed_at = datetime.now(timezone.utc)
+
         await db.commit()
         await db.refresh(release)
         # 通知下一角色:已特批放行
@@ -735,7 +756,8 @@ async def force_advance(
 
     if release.status == ReleaseStatus.PENDING_CONFIRM:
         # Force-release: same as confirm_release but bypassing checks
-        release.status = ReleaseStatus.RELEASED
+        # v1.5.1: 特批放行释放,状态设为 RELEASED_FORCED(已特批释放)
+        release.status = ReleaseStatus.RELEASED_FORCED
         release.confirmed_at = datetime.now(timezone.utc)
         if forced_by is not None:
             release.force_advanced_by = forced_by
@@ -790,10 +812,61 @@ async def force_advance(
             f"Cannot force-advance in status '{release.status.value}'"
         )
 
+    # v1.5.1: 在修改 status 之前保存原状态(用于查找对应阶段的 review_type)
+    original_status = release.status
+
     release.status = next_status
     if forced_by is not None:
         release.force_advanced_by = forced_by
         release.force_advanced_at = datetime.now(timezone.utc)
+
+    # v1.5.1: 标记对应阶段最近的 LLMReview 为 force_passed=True(特批放行)
+    # 用原状态(特批放行前)查找 review_type,而不是新状态
+    status_to_review_type = {
+        ReleaseStatus.CODE_PENDING_REVIEW: "code_review",
+        ReleaseStatus.TEST_PENDING_REVIEW: "test_report_review",
+        ReleaseStatus.EXPERT_PENDING_REVIEW: "expert_report_review",
+    }
+    current_review_type = status_to_review_type.get(original_status)
+    if current_review_type is not None:
+        from app.models.review import LLMReview, ReviewType as _RT
+        try:
+            rt_enum = _RT(current_review_type)
+        except ValueError:
+            rt_enum = None
+        if rt_enum is not None:
+            review_stmt = (
+                select(LLMReview)
+                .where(
+                    LLMReview.release_id == release_id,
+                    LLMReview.review_type == rt_enum,
+                )
+                .order_by(LLMReview.created_at.desc())
+                .limit(1)
+            )
+            latest_review = (await db.execute(review_stmt)).scalars().first()
+            if latest_review is not None and not latest_review.force_passed:
+                latest_review.force_passed = True
+                latest_review.force_passed_by = forced_by
+                latest_review.force_passed_at = datetime.now(timezone.utc)
+            elif latest_review is None:
+                # v1.5.1: 如果该阶段没有 LLMReview,创建一个 force_passed=True 的占位 review
+                # 用于在前端显示"特批放行"标签(满足需求:每个评审阶段特批放行后都可见)
+                from app.models.review import ReviewResult as _RR
+                placeholder_review = LLMReview(
+                    release_id=release_id,
+                    review_type=rt_enum,
+                    review_round=1,
+                    result=_RR.FAILED,
+                    conclusion="特批放行-该阶段未触发LLM评审",
+                    triggered_by=forced_by,
+                    force_passed=True,
+                    force_passed_by=forced_by,
+                    force_passed_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(timezone.utc),
+                )
+                db.add(placeholder_review)
+
     await db.commit()
     await db.refresh(release)
     # 通知下一角色:已特批放行

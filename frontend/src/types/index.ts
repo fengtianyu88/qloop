@@ -21,6 +21,7 @@ export type ReleaseStatus =
   | 'expert_pending_review'
   | 'pending_confirm'
   | 'released'
+  | 'released_forced'
   | 'review_failed'
 
 /** LLM 评审类型 */
@@ -212,6 +213,8 @@ export interface Release {
   force_advanced_by: string | null
   force_advanced_at: string | null
   force_advanced_by_name: string | null
+  // v1.5.1: 被特批放行的评审数量
+  force_passed_count: number
   created_at: string
   updated_at: string
   // Associated project ID (populated via version join in _enrich_release_response)
@@ -246,6 +249,11 @@ export interface LLMReview {
   model_used: string | null
   triggered_by: string
   triggered_by_name: string | null
+  // v1.5.1: 特批放行信息
+  force_passed: boolean
+  force_passed_by: string | null
+  force_passed_by_name: string | null
+  force_passed_at: string | null
   created_at: string
   completed_at: string | null
 }

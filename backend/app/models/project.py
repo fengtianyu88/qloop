@@ -39,6 +39,7 @@ class ReleaseStatus(str, Enum):
     EXPERT_PENDING_REVIEW = "expert_pending_review"
     PENDING_CONFIRM = "pending_confirm"
     RELEASED = "released"
+    RELEASED_FORCED = "released_forced"  # 已特批释放:含特批放行的释放
     REVIEW_FAILED = "review_failed"
 
 

@@ -18,6 +18,7 @@ export function statusLabel(status: ReleaseStatus): string {
     expert_pending_review: '专家报告待评审',
     pending_confirm: '待 PM 确认',
     released: '已释放',
+    released_forced: '已特批释放',
     review_failed: '评审未通过',
   }
   return map[status] ?? status
@@ -32,6 +33,7 @@ export function statusTagType(status: ReleaseStatus): string {
     expert_pending_review: 'warning',
     pending_confirm: 'primary',
     released: 'success',
+    released_forced: 'warning',
     review_failed: 'danger',
   }
   return map[status] ?? 'info'

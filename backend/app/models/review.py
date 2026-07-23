@@ -180,9 +180,20 @@ class LLMReview(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # v1.5.1: 特批放行标记(该评审未通过但被 PM/管理员特批放行)
+    force_passed: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    force_passed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    force_passed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    force_passed_by_user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[force_passed_by])
 
     # Relationships
     release: Mapped["Release"] = relationship(
         "Release", back_populates="llm_reviews"
     )
-    triggered_by_user: Mapped["User"] = relationship("User")
+    triggered_by_user: Mapped["User"] = relationship("User", foreign_keys=[triggered_by])

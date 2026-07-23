@@ -1,0 +1,86 @@
+[
+  {
+    "tc_id": "TC-V151-01",
+    "passed": true,
+    "actual": "健康检查通过,status=healthy",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-02",
+    "passed": true,
+    "actual": "admin 登录 成功",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-03",
+    "passed": true,
+    "actual": "数据库枚举包含 RELEASED_FORCED (共 8 个: ['DRAFT', 'CODE_PENDING_REVIEW', 'TEST_PENDING_REVIEW', 'EXPERT_PENDING_REVIEW', 'PENDING_CONFIRM', 'RELEASED', 'REVIEW_FAILED', 'RELEASED_FORCED'])",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-04",
+    "passed": true,
+    "actual": "llm_reviews 表已包含全部 3 个新字段: {'force_passed': 'boolean', 'force_passed_at': 'timestamp with time zone', 'force_passed_by': 'uuid'}",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-05",
+    "passed": true,
+    "actual": "status=released_forced 过滤成功,返回 0 条",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-06",
+    "passed": true,
+    "actual": "force_passed_count=0",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-07",
+    "passed": true,
+    "actual": "找到 pending_confirm release: 72b69968",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-08",
+    "passed": true,
+    "actual": "特批放行成功,status=released_forced",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-09",
+    "passed": true,
+    "actual": "找到 code_pending_review release: 5b13abbd",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-10",
+    "passed": true,
+    "actual": "代码评审特批放行成功,force_passed=True,放行人=(未知)",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-11",
+    "passed": true,
+    "actual": "找到 released release: 863465c6",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-12",
+    "passed": true,
+    "actual": "已释放 release 特批放行返回 400(符合预期),body={\"detail\":\"Release is already released\"}",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-13",
+    "passed": true,
+    "actual": "详情接口返回 force_passed_count=0",
+    "notes": ""
+  },
+  {
+    "tc_id": "TC-V151-14",
+    "passed": true,
+    "actual": "LLMReviewResponse 包含全部 4 个新字段 (force_passed=False)",
+    "notes": ""
+  }
+]

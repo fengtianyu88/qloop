@@ -1007,8 +1007,246 @@ DRAFT → CODE_PENDING_REVIEW → TEST_PENDING_REVIEW → EXPERT_PENDING_REVIEW 
 | `docs/superpowers/specs/2026-07-22-qloop-design-v1.5.0.md` | 重命名自 v1.4.7; 新增第 18 章 v1.5.0 |
 | `docs/tests/v1.5.0/` | 新增测试用例 Excel + 测试报告 + 测试脚本（14 个） |
 
+
+
+## 第 19 章 v1.5.1 — 特批放行状态机 + 分阶段标记 + 占位评审（2026-07-23）
+
+### 19.1 变更摘要
+
+本版本针对「释放流水线特批放行」场景做了三处增强，并修复了 `force_advance` 中一处关键 Bug：
+
+1. **新增 `RELEASED_FORCED` 释放状态**：当释放流水线中任何阶段被特批放行时，最终释放状态为 `RELEASED_FORCED`（已特批释放），与 `RELEASED`（已释放）区分。
+2. **LLMReview 新增 `force_passed` 标记字段**：每个评审阶段特批放行时，标记对应阶段最近的 LLMReview 为 `force_passed=True`，并记录 `force_passed_by`（放行人）和 `force_passed_at`（放行时间）。
+3. **占位评审创建**：当特批放行的阶段没有 LLMReview 记录时，自动创建一个 `force_passed=True` 的占位评审（`result=FAILED`, `conclusion="特批放行-该阶段未触发LLM评审"`），确保前端能显示"特批放行"标签。
+4. **Bug 修复**：`force_advance` 在修改 `release.status` 后才查找对应阶段的 review_type，导致查找的是新状态而非原状态，标记错了阶段。修复为先保存 `original_status`，再基于原状态查找。
+
+### 19.2 状态机扩展
+
+`ReleaseStatus` 枚举新增 `RELEASED_FORCED`：
+
+```python
+class ReleaseStatus(str, Enum):
+    DRAFT = "draft"
+    CODE_PENDING_REVIEW = "code_pending_review"
+    TEST_PENDING_REVIEW = "test_pending_review"
+    EXPERT_PENDING_REVIEW = "expert_pending_review"
+    PENDING_CONFIRM = "pending_confirm"
+    RELEASED = "released"            # 已释放（全部正常通过）
+    RELEASED_FORCED = "released_forced"  # 已特批释放（含特批放行）
+    REVIEW_FAILED = "review_failed"
+```
+
+**状态判定逻辑**（`confirm_release` 与 `force_advance` 共享）：
+
+```python
+# v1.5.1: 检查是否曾经被特批放行(任何评审阶段被特批)
+force_passed_count_stmt = select(LLMReview).where(
+    LLMReview.release_id == release_id,
+    LLMReview.force_passed == True,
+)
+force_passed_reviews = (await db.execute(force_passed_count_stmt)).scalars().all()
+
+if len(force_passed_reviews) > 0:
+    release.status = ReleaseStatus.RELEASED_FORCED
+else:
+    release.status = ReleaseStatus.RELEASED
+```
+
+### 19.3 数据库迁移
+
+PostgreSQL 枚举扩展（注意：SQLAlchemy 用 enum `.name` 大写存储，因此数据库枚举值需为大写）：
+
+```sql
+-- 添加 RELEASED_FORCED 枚举值（大写，与现有枚举值一致）
+ALTER TYPE release_status ADD VALUE IF NOT EXISTS 'RELEASED_FORCED';
+```
+
+**注意事项**：
+- 初次添加时误用小写 `'released_forced'`，导致与 SQLAlchemy 的 `.name`（大写 `RELEASED_FORCED`）不匹配，触发 `asyncpg.exceptions.InvalidTextRepresentationError`。
+- 修复：`ALTER TYPE release_status RENAME VALUE 'released_forced' TO 'RELEASED_FORCED';`
+
+`llm_reviews` 表新增 3 个字段：
+
+```sql
+ALTER TABLE llm_reviews ADD COLUMN force_passed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE llm_reviews ADD COLUMN force_passed_by UUID REFERENCES users(id);
+ALTER TABLE llm_reviews ADD COLUMN force_passed_at TIMESTAMP WITH TIME ZONE;
+```
+
+### 19.4 force_passed 标记机制
+
+`force_advance` 函数（`release_service.py`）在特批放行时执行标记：
+
+```python
+# v1.5.1: 在修改 status 之前保存原状态(用于查找对应阶段的 review_type)
+original_status = release.status
+
+release.status = next_status
+if forced_by is not None:
+    release.force_advanced_by = forced_by
+    release.force_advanced_at = datetime.now(timezone.utc)
+
+# v1.5.1: 标记对应阶段最近的 LLMReview 为 force_passed=True(特批放行)
+status_to_review_type = {
+    ReleaseStatus.CODE_PENDING_REVIEW: "code_review",
+    ReleaseStatus.TEST_PENDING_REVIEW: "test_report_review",
+    ReleaseStatus.EXPERT_PENDING_REVIEW: "expert_report_review",
+}
+current_review_type = status_to_review_type.get(original_status)  # 用原状态!
+# ... 查询 latest_review 并标记 force_passed=True
+```
+
+**REVIEW_FAILED 状态特批放行**：直接标记 `failed_review.force_passed=True`（已有的失败评审）。
+
+**PENDING_CONFIRM 状态特批放行**：调用 `confirm_release` 内部逻辑，根据是否有 force_passed review 决定 `RELEASED` 或 `RELEASED_FORCED`。
+
+### 19.5 占位评审创建
+
+当特批放行的阶段没有 LLMReview 时，创建占位评审：
+
+```python
+elif latest_review is None:
+    # v1.5.1: 如果该阶段没有 LLMReview,创建一个 force_passed=True 的占位 review
+    # 用于在前端显示"特批放行"标签(满足需求:每个评审阶段特批放行后都可见)
+    from app.models.review import ReviewResult as _RR
+    placeholder_review = LLMReview(
+        release_id=release_id,
+        review_type=rt_enum,
+        review_round=1,
+        result=_RR.FAILED,
+        conclusion="特批放行-该阶段未触发LLM评审",
+        triggered_by=forced_by,
+        force_passed=True,
+        force_passed_by=forced_by,
+        force_passed_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+    )
+    db.add(placeholder_review)
+```
+
+### 19.6 API 响应扩展
+
+#### ReleaseResponse / ReleaseListResponse
+
+新增 `force_passed_count` 字段，用于前端区分已释放/已特批释放：
+
+```python
+# v1.5.1: 被特批放行的评审数量(用于区分已释放/已特批释放)
+force_passed_count: int = 0
+```
+
+#### LLMReviewResponse
+
+新增 4 个字段：
+
+```python
+# v1.5.1: 特批放行信息
+force_passed: bool = False
+force_passed_by: Optional[uuid.UUID] = None
+force_passed_by_name: Optional[str] = None  # 通过 _enrich_reviews_with_names 填充
+force_passed_at: Optional[datetime] = None
+```
+
+### 19.7 前端展示
+
+#### 状态映射（`frontend/src/utils/status.ts`）
+
+```typescript
+// statusLabel
+released_forced: '已特批释放',
+// statusTagType（黄色 warning 标签）
+released_forced: 'warning',
+```
+
+#### ReleaseDetail.vue 展示
+
+1. **代码/测试/专家评审结果区域**：当评审 `force_passed=True` 时，在"未通过"标签旁加黄色"特批放行"标签，并标注放行人姓名 + 放行时间（格式与第五步 PM 确认释放中一致）。
+2. **step5 PM 确认步骤**：根据状态显示"已释放"或"已特批释放"。
+3. **交付物卡片头部**：区分已释放/已特批释放。
+4. **LLM 评审历史时间线**：特批放行的评审显示黄色标签。
+5. **LLM 评审结果列表**：卡片头部显示特批放行标签。
+
+### 19.8 测试验证
+
+新增 14 个测试用例（`test_v151.py`），全部通过：
+
+| TC ID | 测试内容 | 结果 |
+|-------|---------|------|
+| TC-V151-01 | 健康检查 | PASS |
+| TC-V151-02 | admin 登录 | PASS |
+| TC-V151-03 | 数据库枚举包含 RELEASED_FORCED | PASS |
+| TC-V151-04 | llm_reviews 表已添加 force_passed/force_passed_by/force_passed_at 字段 | PASS |
+| TC-V151-05 | /api/search/releases 支持 status=released_forced 过滤 | PASS |
+| TC-V151-06 | ReleaseListResponse 包含 force_passed_count 字段 | PASS |
+| TC-V151-07 | 查找 pending_confirm release | PASS |
+| TC-V151-08 | 对 pending_confirm release 特批放行 -> released_forced | PASS |
+| TC-V151-09 | 查找 code_pending_review release | PASS |
+| TC-V151-10 | 代码评审特批放行 -> force_passed=True 标记 | PASS |
+| TC-V151-11 | 查找 released release | PASS |
+| TC-V151-12 | 已 released 的 release 不允许再次特批放行(返回 400) | PASS |
+| TC-V151-13 | /api/releases/{id} 详情接口返回 force_passed_count | PASS |
+| TC-V151-14 | LLMReviewResponse 包含 force_passed_* 字段 | PASS |
+
+**测试策略**：
+- 破坏性测试（TC-V151-08、TC-V151-10）在测试后通过 SQL 自动回滚到原状态，不污染数据。
+- 数据库枚举值校验直接通过 `psql` 查询 `pg_enum`。
+- API 响应字段校验通过 `/api/search/releases` 和 `/api/releases/{id}` 接口。
+
+### 19.9 Bug 修复记录
+
+#### Bug #1: force_advance 用新状态查找 review_type
+
+**现象**：对 `CODE_PENDING_REVIEW` release 特批放行后，没有标记 `code_review` 评审的 `force_passed=True`，而是尝试标记 `test_report_review`（下一阶段的 review_type）。
+
+**根因**：`force_advance` 先执行 `release.status = next_status`，然后用 `release.status` 查找 `status_to_review_type`，导致查找的是新状态而非原状态。
+
+**修复**：在修改 `release.status` 之前保存 `original_status = release.status`，后续用 `original_status` 查找 `status_to_review_type`。
+
+#### Bug #2: 数据库枚举值大小写不一致
+
+**现象**：`/api/releases/{id}/force-advance` 对 `PENDING_CONFIRM` release 返回 HTTP 500，错误 `invalid input value for enum release_status: "RELEASED_FORCED"`。
+
+**根因**：初次添加枚举值时用小写 `'released_forced'`，但 SQLAlchemy 的 `SAEnum` 默认用 enum 的 `.name`（大写 `RELEASED_FORCED`）存储到数据库，导致写入失败。
+
+**修复**：`ALTER TYPE release_status RENAME VALUE 'released_forced' TO 'RELEASED_FORCED';`
+
+### 19.10 文件变更清单
+
+| 文件 | 变更 |
+|------|------|
+| `backend/app/models/project.py` | `ReleaseStatus` 新增 `RELEASED_FORCED = "released_forced"` |
+| `backend/app/models/review.py` | `LLMReview` 新增 `force_passed`/`force_passed_by`/`force_passed_at`/`force_passed_by_user` 字段 |
+| `backend/app/schemas/project.py` | `ReleaseResponse`/`ReleaseListResponse` 新增 `force_passed_count: int = 0` |
+| `backend/app/schemas/review.py` | `LLMReviewResponse` 新增 `force_passed`/`force_passed_by`/`force_passed_by_name`/`force_passed_at` 字段 |
+| `backend/app/services/release_service.py` | `confirm_release` 新增 force_passed 检查; `force_advance` 新增 force_passed 标记 + 占位 review 创建 + original_status Bug 修复 |
+| `backend/app/api/releases.py` | `_enrich_release_response` 新增 force_passed_count 计算 |
+| `backend/app/api/reviews.py` | `_enrich_reviews_with_names` 新增 force_passed_by_name 填充 |
+| `frontend/src/types/index.ts` | `ReleaseStatus` 新增 `'released_forced'`; `LLMReview` 接口新增 force_passed_* 字段; `Release` 接口新增 `force_passed_count` |
+| `frontend/src/utils/status.ts` | `statusLabel`/`statusTagType` 新增 `released_forced` 映射 |
+| `frontend/src/views/ReleaseDetail.vue` | 评审结果区域新增黄色"特批放行"标签 + 放行人 + 时间; step5 区分已释放/已特批释放 |
+| `README.md` | 版本号 1.5.0 → 1.5.1; 新增 v1.5.1 changelog 行 |
+| `README_zh-CN.md` | 版本号 1.5.0 → 1.5.1; 新增 v1.5.1 changelog 行 |
+| `docs/DEPLOYMENT.md` | 版本号 1.5.0 → 1.5.1; 日期 2026-07-23 |
+| `backend/app/main.py` | FastAPI 应用版本 + /api/health 接口版本 → 1.5.1 |
+| `docs/superpowers/specs/2026-07-22-qloop-design-v1.5.0.md` | 新增第 19 章 v1.5.1 |
+| `test_v151.py` | 新增 14 个测试用例(位于 `c:\Users\tiany\Documents\Trae solo my data\`) |
+
+### 19.11 升级说明
+
+1. **数据库迁移**（已有 v1.5.0 数据库）：
+   ```sql
+   ALTER TYPE release_status ADD VALUE IF NOT EXISTS 'RELEASED_FORCED';
+   ALTER TABLE llm_reviews ADD COLUMN IF NOT EXISTS force_passed BOOLEAN NOT NULL DEFAULT FALSE;
+   ALTER TABLE llm_reviews ADD COLUMN IF NOT EXISTS force_passed_by UUID REFERENCES users(id);
+   ALTER TABLE llm_reviews ADD COLUMN IF NOT EXISTS force_passed_at TIMESTAMP WITH TIME ZONE;
+   ```
+2. **重启后端**：`sudo systemctl restart qloop-backend`（或手动重启 uvicorn）。
+3. **前端构建**：`cd frontend && npm run build`，部署 `dist/` 目录。
+4. **验证**：`curl http://localhost:8000/api/health` 应返回 `"version":"1.5.1"`。
+
 ---
 
-**文档版本**：v1.5.0  
-**最后更新**：2026-07-23  
+**文档版本**：v1.5.1
+**最后更新**：2026-07-23
 **作者**：qloop 开发团队
+

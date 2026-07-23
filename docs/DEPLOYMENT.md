@@ -1,6 +1,6 @@
 # qloop — 部署指南
 
-> 版本：1.5.0  日期：2026-07-23
+> 版本：1.5.1  日期：2026-07-23
 
 ---
 
@@ -435,7 +435,7 @@ sudo apt install -y postfix
 ```bash
 # 检查后端
 curl http://localhost:8000/api/health
-# 预期: {"status":"healthy","app":"qloop ...","version":"1.5.0"}
+# 预期: {"status":"healthy","app":"qloop ...","version":"1.5.1"}
 
 # 检查 Redis
 redis-cli ping

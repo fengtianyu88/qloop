@@ -153,6 +153,8 @@ class ReleaseResponse(BaseModel):
     force_advanced_by: Optional[uuid.UUID] = None
     force_advanced_at: Optional[datetime] = None
     force_advanced_by_name: Optional[str] = None
+    # v1.5.1: 被特批放行的评审数量(用于区分已释放/已特批释放)
+    force_passed_count: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -191,6 +193,8 @@ class ReleaseListResponse(BaseModel):
     force_advanced_by: Optional[uuid.UUID] = None
     force_advanced_at: Optional[datetime] = None
     force_advanced_by_name: Optional[str] = None
+    # v1.5.1: 被特批放行的评审数量(用于区分已释放/已特批释放)
+    force_passed_count: int = 0
     created_at: datetime
     updated_at: datetime
 

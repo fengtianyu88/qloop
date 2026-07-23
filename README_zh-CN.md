@@ -2,7 +2,7 @@
 
 > 让每一次交付都经得起检验的质量闭环。
 
-[![Version](https://img.shields.io/badge/版本-1.5.0-blue.svg)](./README_zh-CN.md)
+[![Version](https://img.shields.io/badge/版本-1.5.1-blue.svg)](./README_zh-CN.md)
 [![License: MIT](https://img.shields.io/badge/许可证-MIT-green.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/vue-3-4FC08D.svg)](https://vuejs.org/)
@@ -66,6 +66,7 @@
 - **关键事件自动触发**:版本分配、交付物上传、评审通过/失败、释放确认
 - **通知去重**(v1.4.7):SSE 重连不再重放已弹过的通知
 - **Release v1.5.0**: MinIO 预签名 URL 7 天有效期 + 空文件上传拦截 + 160 个测试用例 100% 通过
+- **Release v1.5.1**: 特批放行状态机(`released_forced`)+ 分阶段特批放行标记 + 占位评审创建 + 14 个新测试用例 100% 通过
 
 ---
 

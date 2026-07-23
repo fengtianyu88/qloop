@@ -58,7 +58,9 @@ const activeStep = computed(() => {
 })
 
 const isFailed = computed(() => release.value?.status === 'review_failed')
-const isReleased = computed(() => release.value?.status === 'released')
+// v1.5.1: isReleased 同时覆盖 released 和 released_forced
+const isReleased = computed(() => release.value?.status === 'released' || release.value?.status === 'released_forced')
+const isReleasedForced = computed(() => release.value?.status === 'released_forced')
 
 // 评审类型选项
 const reviewTypeOptions: { label: string; value: ReviewType }[] = [
@@ -1009,7 +1011,7 @@ const step2Status = computed<StepStatus>(() => {
   const status = release.value.status
   if (status === 'draft') return 'current'
   if (status === 'code_pending_review') return 'in_progress'
-  if (['test_pending_review', 'expert_pending_review', 'pending_confirm', 'released'].includes(status)) return 'completed'
+  if (['test_pending_review', 'expert_pending_review', 'pending_confirm', 'released', 'released_forced'].includes(status)) return 'completed'
   if (status === 'review_failed') {
     const review = getReviewByType('code_review')
     if (review?.result === 'failed' || review?.result === 'error') return 'failed'
@@ -1024,7 +1026,7 @@ const step3Status = computed<StepStatus>(() => {
   const status = release.value.status
   if (['draft', 'code_pending_review'].includes(status)) return 'not_started'
   if (status === 'test_pending_review') return 'in_progress'
-  if (['expert_pending_review', 'pending_confirm', 'released'].includes(status)) return 'completed'
+  if (['expert_pending_review', 'pending_confirm', 'released', 'released_forced'].includes(status)) return 'completed'
   if (status === 'review_failed') {
     const review = getReviewByType('test_report_review')
     if (review?.result === 'failed' || review?.result === 'error') return 'failed'
@@ -1041,7 +1043,7 @@ const step4Status = computed<StepStatus>(() => {
   const status = release.value.status
   if (['draft', 'code_pending_review', 'test_pending_review'].includes(status)) return 'not_started'
   if (status === 'expert_pending_review') return 'in_progress'
-  if (['pending_confirm', 'released'].includes(status)) return 'completed'
+  if (['pending_confirm', 'released', 'released_forced'].includes(status)) return 'completed'
   if (status === 'review_failed') {
     const review = getReviewByType('expert_report_review')
     if (review?.result === 'failed' || review?.result === 'error') return 'failed'
@@ -1057,7 +1059,7 @@ const step5Status = computed<StepStatus>(() => {
   const status = release.value.status
   if (['draft', 'code_pending_review', 'test_pending_review', 'expert_pending_review'].includes(status)) return 'not_started'
   if (status === 'pending_confirm') return 'current'
-  if (status === 'released') return 'completed'
+  if (status === 'released' || status === 'released_forced') return 'completed'
   return 'not_started'
 })
 
@@ -1370,6 +1372,13 @@ onMounted(async () => {
                   <el-tag :type="reviewResultTagType(getReviewByType('code_review')!.result)" size="small">
                     {{ reviewResultLabel(getReviewByType('code_review')!.result) }}
                   </el-tag>
+                  <el-tag v-if="getReviewByType('code_review')!.force_passed" type="warning" size="small" effect="light" style="margin-left:6px">
+                    <el-icon style="margin-right:4px"><Promotion /></el-icon>特批放行
+                  </el-tag>
+                  <span v-if="getReviewByType('code_review')!.force_passed && getReviewByType('code_review')!.force_passed_by_name" style="margin-left:8px;color:#e6a23c;font-size:12px">
+                    放行人:{{ getReviewByType('code_review')!.force_passed_by_name }}
+                    · {{ formatTime(getReviewByType('code_review')!.force_passed_at) }}
+                  </span>
                   <span v-if="getReviewByType('code_review')!.total_score !== null" style="margin-left:8px">
                     分数:<b>{{ getReviewByType('code_review')!.total_score }}</b>
                   </span>
@@ -1465,6 +1474,13 @@ onMounted(async () => {
                   <el-tag :type="reviewResultTagType(getReviewByType('test_report_review')!.result)" size="small">
                     {{ reviewResultLabel(getReviewByType('test_report_review')!.result) }}
                   </el-tag>
+                  <el-tag v-if="getReviewByType('test_report_review')!.force_passed" type="warning" size="small" effect="light" style="margin-left:6px">
+                    <el-icon style="margin-right:4px"><Promotion /></el-icon>特批放行
+                  </el-tag>
+                  <span v-if="getReviewByType('test_report_review')!.force_passed && getReviewByType('test_report_review')!.force_passed_by_name" style="margin-left:8px;color:#e6a23c;font-size:12px">
+                    放行人:{{ getReviewByType('test_report_review')!.force_passed_by_name }}
+                    · {{ formatTime(getReviewByType('test_report_review')!.force_passed_at) }}
+                  </span>
                   <span v-if="getReviewByType('test_report_review')!.total_score !== null" style="margin-left:8px">
                     分数:<b>{{ getReviewByType('test_report_review')!.total_score }}</b>
                   </span>
@@ -1553,6 +1569,13 @@ onMounted(async () => {
                   <el-tag :type="reviewResultTagType(getReviewByType('expert_report_review')!.result)" size="small">
                     {{ reviewResultLabel(getReviewByType('expert_report_review')!.result) }}
                   </el-tag>
+                  <el-tag v-if="getReviewByType('expert_report_review')!.force_passed" type="warning" size="small" effect="light" style="margin-left:6px">
+                    <el-icon style="margin-right:4px"><Promotion /></el-icon>特批放行
+                  </el-tag>
+                  <span v-if="getReviewByType('expert_report_review')!.force_passed && getReviewByType('expert_report_review')!.force_passed_by_name" style="margin-left:8px;color:#e6a23c;font-size:12px">
+                    放行人:{{ getReviewByType('expert_report_review')!.force_passed_by_name }}
+                    · {{ formatTime(getReviewByType('expert_report_review')!.force_passed_at) }}
+                  </span>
                   <span v-if="getReviewByType('expert_report_review')!.total_score !== null" style="margin-left:8px">
                     分数:<b>{{ getReviewByType('expert_report_review')!.total_score }}</b>
                   </span>
@@ -1641,8 +1664,9 @@ onMounted(async () => {
                     <el-icon><Promotion /></el-icon>特批放行
                   </el-button>
                 </template>
-                <template v-if="release.status === 'released'">
-                  <el-tag type="success" size="small">已释放</el-tag>
+                <template v-if="release.status === 'released' || release.status === 'released_forced'">
+                  <el-tag v-if="isReleasedForced" type="warning" size="small">已特批释放</el-tag>
+                  <el-tag v-else type="success" size="small">已释放</el-tag>
                   <el-button v-if="release.download_link" type="primary" size="small" @click="openLink(release.download_link)">
                     <el-icon><Download /></el-icon>下载完整交付包
                   </el-button>
@@ -1708,6 +1732,12 @@ onMounted(async () => {
               <h4 class="timeline-title">{{ reviewTypeLabel(review.review_type) }} · 第 {{ review.review_round }} 轮</h4>
               <p class="timeline-line"><span class="timeline-label">结果:</span>
                 <el-tag size="small" :type="reviewResultTagType(review.result)">{{ reviewResultLabel(review.result) }}</el-tag>
+                <el-tag v-if="review.force_passed" type="warning" size="small" effect="light" style="margin-left:6px">
+                  <el-icon style="margin-right:4px"><Promotion /></el-icon>特批放行
+                </el-tag>
+                <span v-if="review.force_passed && review.force_passed_by_name" style="margin-left:8px;color:#e6a23c;font-size:12px">
+                  放行人:{{ review.force_passed_by_name }} · {{ formatTime(review.force_passed_at) }}
+                </span>
               </p>
               <p v-if="review.total_score !== null" class="timeline-line">
                 <span class="timeline-label">总分:</span>{{ review.total_score }}
@@ -1737,9 +1767,15 @@ onMounted(async () => {
             <div class="review-item-header">
               <el-tag>{{ reviewTypeLabel(r.review_type) }}</el-tag>
               <el-tag :type="reviewResultTagType(r.result)">{{ reviewResultLabel(r.result) }}</el-tag>
+              <el-tag v-if="r.force_passed" type="warning" size="small" effect="light">
+                <el-icon style="margin-right:4px"><Promotion /></el-icon>特批放行
+              </el-tag>
               <span class="review-round">第 {{ r.review_round }} 轮</span>
               <span class="review-model" v-if="r.model_used">模型：{{ r.model_used }}</span>
               <span class="review-trigger" v-if="r.triggered_by">触发人：{{ r.triggered_by_name || r.triggered_by.slice(0,8) }}</span>
+              <span v-if="r.force_passed && r.force_passed_by_name" class="review-trigger" style="color:#e6a23c">
+                放行人：{{ r.force_passed_by_name }} · {{ formatTime(r.force_passed_at) }}
+              </span>
               <span class="review-time">{{ formatTime(r.created_at) }}</span>
             </div>
 
@@ -1778,7 +1814,8 @@ onMounted(async () => {
         <template #header>
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span>交付物</span>
-            <el-tag v-if="isReleased" type="success" size="small">已释放</el-tag>
+            <el-tag v-if="isReleasedForced" type="warning" size="small">已特批释放</el-tag>
+            <el-tag v-else-if="isReleased" type="success" size="small">已释放</el-tag>
             <el-tag v-else-if="artifacts.length > 0" type="warning" size="small">{{ artifacts.length }} 个文件</el-tag>
           </div>
         </template>

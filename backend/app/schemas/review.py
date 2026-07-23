@@ -94,5 +94,10 @@ class LLMReviewResponse(BaseModel):
     model_used: Optional[str] = None
     triggered_by: uuid.UUID
     triggered_by_name: Optional[str] = None
+    # v1.5.1: 特批放行信息
+    force_passed: bool = False
+    force_passed_by: Optional[uuid.UUID] = None
+    force_passed_by_name: Optional[str] = None
+    force_passed_at: Optional[datetime] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
