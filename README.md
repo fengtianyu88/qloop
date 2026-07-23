@@ -2,7 +2,7 @@
 
 > The quality closed loop that ships with confidence.
 
-[![Version](https://img.shields.io/badge/version-1.5.1-blue.svg)](./README.md)
+[![Version](https://img.shields.io/badge/version-1.5.2-blue.svg)](./README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/vue-3-4FC08D.svg)](https://vuejs.org/)
@@ -69,6 +69,7 @@ truth, and brings LLM-powered automated review to every gate.
 - **Notification dedup** (v1.4.7): SSE reconnects no longer replay already-shown notifications
 - **Release v1.5.0**: MinIO presigned URL 7-day validity + empty-file upload guard + 160 test cases 100% pass
 - **Release v1.5.1**: Force-pass status machine (`released_forced`) + per-stage force-passed markers + placeholder review creation + 14 new test cases 100% pass
+- **Release v1.5.2**: Custom org types (`org_types` table) + dynamic org type management + 18 new test cases 100% pass
 
 ---
 

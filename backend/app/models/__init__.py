@@ -3,7 +3,7 @@
 from app.models.audit import AuditLog
 from app.models.system_settings import SystemSettings
 from app.models.notification import Notification, NotificationType
-from app.models.organization import AdminScope, OrgType, OrgUnit
+from app.models.organization import AdminScope, OrgTypeModel, OrgUnit
 from app.models.project import (
     ExternalRecipient,
     Project,
@@ -28,7 +28,7 @@ __all__ = [
     "SystemRole",
     # Organization
     "OrgUnit",
-    "OrgType",
+    "OrgTypeModel",
     "AdminScope",
     # Project
     "Project",

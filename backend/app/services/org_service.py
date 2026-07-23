@@ -3,12 +3,103 @@
 import uuid
 from typing import Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.organization import AdminScope, OrgUnit
-from app.schemas.organization import OrgTreeResponse, OrgUnitCreate, OrgUnitUpdate
+from app.models.organization import AdminScope, OrgTypeModel, OrgUnit
+from app.schemas.organization import (
+    OrgTreeResponse,
+    OrgTypeCreate,
+    OrgUnitCreate,
+    OrgUnitUpdate,
+)
 
+
+# ===========================================================================
+# 组织类型管理 v1.5.2
+# ===========================================================================
+
+async def get_org_types(db: AsyncSession) -> List[OrgTypeModel]:
+    """获取所有启用的组织类型,按 sort_order 排序。"""
+    result = await db.execute(
+        select(OrgTypeModel)
+        .where(OrgTypeModel.is_active == True)  # noqa: E712
+        .order_by(OrgTypeModel.sort_order, OrgTypeModel.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def get_org_type_by_code(db: AsyncSession, code: str) -> Optional[OrgTypeModel]:
+    """按 code 查找组织类型。"""
+    result = await db.execute(
+        select(OrgTypeModel).where(OrgTypeModel.code == code)
+    )
+    return result.scalar_one_or_none()
+
+
+async def create_org_type(
+    db: AsyncSession, org_type_create: OrgTypeCreate, created_by: uuid.UUID
+) -> OrgTypeModel:
+    """创建组织类型。
+
+    Raises:
+        ValueError: code 已存在。
+    """
+    # 检查 code 是否已存在(不区分大小写)
+    existing = await db.execute(
+        select(OrgTypeModel).where(func.lower(OrgTypeModel.code) == org_type_create.code.lower())
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise ValueError(f"组织类型代码 '{org_type_create.code}' 已存在")
+
+    org_type = OrgTypeModel(
+        code=org_type_create.code.lower().strip(),
+        name=org_type_create.name.strip(),
+        is_system=False,
+        sort_order=org_type_create.sort_order,
+        created_by=created_by,
+    )
+    db.add(org_type)
+    await db.commit()
+    await db.refresh(org_type)
+    return org_type
+
+
+async def delete_org_type(db: AsyncSession, type_id: uuid.UUID) -> bool:
+    """删除组织类型。
+
+    安全策略:
+    - is_system=True 拒绝删除(系统预设)
+    - 存在引用此类型的 org_unit 拒绝删除
+
+    Returns:
+        True 表示删除成功;False 表示未找到。
+    """
+    result = await db.execute(
+        select(OrgTypeModel).where(OrgTypeModel.id == type_id)
+    )
+    org_type = result.scalar_one_or_none()
+    if org_type is None:
+        return False
+
+    if org_type.is_system:
+        raise ValueError("系统预设类型不可删除")
+
+    # 检查是否有 org_unit 引用此类型
+    ref_result = await db.execute(
+        select(OrgUnit).where(OrgUnit.org_type == org_type.code).limit(1)
+    )
+    if ref_result.scalar_one_or_none() is not None:
+        raise ValueError(f"存在使用类型 '{org_type.name}' 的组织单元,请先迁移后再删除")
+
+    await db.delete(org_type)
+    await db.commit()
+    return True
+
+
+# ===========================================================================
+# 组织单元管理
+# ===========================================================================
 
 async def create_org_unit(
     db: AsyncSession, org_create: OrgUnitCreate
@@ -23,7 +114,8 @@ async def create_org_unit(
         The created OrgUnit object.
 
     Raises:
-        ValueError: If parent_id is provided but does not exist.
+        ValueError: If parent_id is provided but does not exist,
+                   or if org_type does not exist in org_types table.
     """
     if org_create.parent_id is not None:
         parent = await get_org_unit_by_id(db, org_create.parent_id)
@@ -31,6 +123,11 @@ async def create_org_unit(
             raise ValueError(
                 f"Parent org unit '{org_create.parent_id}' does not exist"
             )
+
+    # v1.5.2: 校验 org_type 是否存在于 org_types 表
+    org_type_obj = await get_org_type_by_code(db, org_create.org_type)
+    if org_type_obj is None:
+        raise ValueError(f"组织类型 '{org_create.org_type}' 不存在")
 
     org_unit = OrgUnit(
         name=org_create.name,
@@ -84,15 +181,7 @@ async def _build_tree(
 
 
 async def get_org_tree(db: AsyncSession) -> List[OrgTreeResponse]:
-    """Get the full organization tree starting from root nodes.
-
-    Args:
-        db: The async database session.
-
-    Returns:
-        A list of OrgTreeResponse representing root nodes with children,
-        each carrying the list of admin user full_names that govern it.
-    """
+    """Get the full organization tree starting from root nodes."""
     result = await db.execute(
         select(OrgUnit)
         .where(OrgUnit.is_active == True)  # noqa: E712
@@ -103,7 +192,6 @@ async def get_org_tree(db: AsyncSession) -> List[OrgTreeResponse]:
     # Build manager_map: org_unit_id -> [full_name, ...]
     manager_map: Dict[uuid.UUID, List[str]] = {}
     if all_units:
-        from app.models.organization import AdminScope
         from app.models.user import User
         unit_ids = [u.id for u in all_units]
         res = await db.execute(
@@ -138,7 +226,6 @@ async def delete_org_unit(db: AsyncSession, org_id: uuid.UUID) -> bool:
         True 表示删除成功;False 表示未找到。
     """
     from sqlalchemy import select as _select
-    from app.models.organization import OrgUnit, AdminScope
     from app.models.user import User
 
     org_unit = await get_org_unit_by_id(db, org_id)
@@ -164,20 +251,10 @@ async def delete_org_unit(db: AsyncSession, org_id: uuid.UUID) -> bool:
     return True
 
 
-
 async def update_org_unit(
     db: AsyncSession, org_id: uuid.UUID, org_update: OrgUnitUpdate
 ) -> Optional[OrgUnit]:
-    """Update an organizational unit.
-
-    Args:
-        db: The async database session.
-        org_id: The ID of the org unit to update.
-        org_update: The fields to update.
-
-    Returns:
-        The updated OrgUnit object, or ``None`` if not found.
-    """
+    """Update an organizational unit."""
     org_unit = await get_org_unit_by_id(db, org_id)
     if org_unit is None:
         return None
@@ -193,6 +270,12 @@ async def update_org_unit(
                 f"Parent org unit '{update_data['parent_id']}' does not exist"
             )
 
+    # v1.5.2: 校验 org_type 是否存在
+    if "org_type" in update_data and update_data["org_type"] is not None:
+        org_type_obj = await get_org_type_by_code(db, update_data["org_type"])
+        if org_type_obj is None:
+            raise ValueError(f"组织类型 '{update_data['org_type']}' 不存在")
+
     for field, value in update_data.items():
         setattr(org_unit, field, value)
 
@@ -201,22 +284,14 @@ async def update_org_unit(
     return org_unit
 
 
+# ===========================================================================
+# 管理员范围管理
+# ===========================================================================
+
 async def set_admin_scope(
     db: AsyncSession, user_id: uuid.UUID, org_unit_id: uuid.UUID
 ) -> AdminScope:
-    """Set an admin scope for a user (create if not exists).
-
-    Args:
-        db: The async database session.
-        user_id: The user ID.
-        org_unit_id: The org unit ID.
-
-    Returns:
-        The AdminScope object.
-
-    Raises:
-        ValueError: If the org unit does not exist or the scope already exists.
-    """
+    """Set an admin scope for a user (create if not exists)."""
     org_unit = await get_org_unit_by_id(db, org_unit_id)
     if org_unit is None:
         raise ValueError(f"Org unit '{org_unit_id}' does not exist")
@@ -242,15 +317,7 @@ async def set_admin_scope(
 async def get_admin_scopes(
     db: AsyncSession, user_id: uuid.UUID
 ) -> List[AdminScope]:
-    """Get all admin scopes for a user.
-
-    Args:
-        db: The async database session.
-        user_id: The user ID.
-
-    Returns:
-        A list of AdminScope objects.
-    """
+    """Get all admin scopes for a user."""
     result = await db.execute(
         select(AdminScope).where(AdminScope.user_id == user_id)
     )
@@ -258,15 +325,7 @@ async def get_admin_scopes(
 
 
 async def delete_admin_scope(db: AsyncSession, scope_id: uuid.UUID) -> bool:
-    """Delete an admin scope by ID.
-
-    Args:
-        db: The async database session.
-        scope_id: The admin scope ID.
-
-    Returns:
-        True if deleted, False if not found.
-    """
+    """Delete an admin scope by ID."""
     result = await db.execute(
         select(AdminScope).where(AdminScope.id == scope_id)
     )

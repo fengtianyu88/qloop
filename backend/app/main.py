@@ -13,7 +13,7 @@ from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
 from app.api.llm_config import router as llm_config_router
 from app.api.notifications import router as notifications_router
-from app.api.organizations import router as organizations_router
+from app.api.organizations import router as organizations_router, org_type_router
 from app.api.projects import router as projects_router
 from app.api.releases import router as releases_router
 from app.api.reviews import router as reviews_router
@@ -56,7 +56,7 @@ def create_app() -> FastAPI:
             f"{settings.APP_NAME} 后端 API — 质量闭环 · 测试驱动开发。"
             f"覆盖项目管理、版本释放流程、LLM 评审与审计日志等能力。"
         ),
-        version="1.5.1",
+        version="1.5.2",
         lifespan=lifespan,
     )
 
@@ -105,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(users_router)
     app.include_router(organizations_router)
+    app.include_router(org_type_router)
     app.include_router(projects_router)
     app.include_router(releases_router)
     app.include_router(search_router)
@@ -121,7 +122,7 @@ def create_app() -> FastAPI:
         return {
             "status": "healthy",
             "app": settings.APP_NAME,
-            "version": "1.5.1",
+            "version": "1.5.2",
         }
 
     return app

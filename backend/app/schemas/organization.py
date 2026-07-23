@@ -4,16 +4,47 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.organization import OrgType
 
+# ---------------------------------------------------------------------------
+# 组织类型 v1.5.2
+# ---------------------------------------------------------------------------
+
+class OrgTypeCreate(BaseModel):
+    """创建组织类型请求。"""
+
+    code: str = Field(..., min_length=1, max_length=50, description="程序识别码(小写英文)")
+    name: str = Field(..., min_length=1, max_length=100, description="显示名称")
+    sort_order: int = Field(default=0, ge=0, description="排序序号")
+
+
+class OrgTypeResponse(BaseModel):
+    """组织类型响应。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    code: str
+    name: str
+    is_system: bool
+    sort_order: int
+    created_by: Optional[uuid.UUID] = None
+    created_by_name: Optional[str] = None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# 组织单元
+# ---------------------------------------------------------------------------
 
 class OrgUnitCreate(BaseModel):
     """Schema for creating an organizational unit."""
 
     name: str
-    org_type: OrgType = OrgType.DEPARTMENT
+    org_type: str = "department"
     parent_id: Optional[uuid.UUID] = None
     description: Optional[str] = None
     is_active: bool = True
@@ -23,7 +54,7 @@ class OrgUnitUpdate(BaseModel):
     """Schema for updating an organizational unit."""
 
     name: Optional[str] = None
-    org_type: Optional[OrgType] = None
+    org_type: Optional[str] = None
     parent_id: Optional[uuid.UUID] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
@@ -36,7 +67,7 @@ class OrgUnitResponse(BaseModel):
 
     id: uuid.UUID
     name: str
-    org_type: OrgType
+    org_type: str
     parent_id: Optional[uuid.UUID] = None
     description: Optional[str] = None
     is_active: bool
@@ -51,7 +82,7 @@ class OrgTreeResponse(BaseModel):
 
     id: uuid.UUID
     name: str
-    org_type: OrgType
+    org_type: str
     parent_id: Optional[uuid.UUID] = None
     description: Optional[str] = None
     is_active: bool
@@ -61,6 +92,10 @@ class OrgTreeResponse(BaseModel):
     manager_names: List[str] = []
     children: List["OrgTreeResponse"] = []
 
+
+# ---------------------------------------------------------------------------
+# 管理员范围
+# ---------------------------------------------------------------------------
 
 class AdminScopeCreate(BaseModel):
     """Schema for creating an admin scope."""

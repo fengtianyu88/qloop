@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Download, Upload } from '@element-plus/icons-vue'
-import { getOrgTree, createOrg, updateOrg, deleteOrg, createAdminScope, getAdminScopes, deleteAdminScope, getOrgAdminScopes } from '@/api/organizations'
+import { Download, Upload, Setting } from '@element-plus/icons-vue'
+import { getOrgTree, createOrg, updateOrg, deleteOrg, createAdminScope, getAdminScopes, deleteAdminScope, getOrgAdminScopes, getOrgTypes, createOrgType, deleteOrgType } from '@/api/organizations'
 import { getUsers } from '@/api/users'
 import { downloadOrganizationsTemplate, importOrganizations } from '@/api/imports'
 import { useAuthStore } from '@/stores/auth'
 import type {
   AdminScope,
   OrgTreeNode,
-  OrgType,
+  OrgTypeItem,
   OrgUnitCreate,
   User,
 } from '@/types'
@@ -20,11 +20,17 @@ const treeData = ref<OrgTreeNode[]>([])
 const loading = ref(false)
 const treeProps = { label: 'name', children: 'children' }
 
-const orgTypeLabel: Record<OrgType, string> = {
-  department: '部门',
-  division: '处室',
-  group: '小组',
-}
+// v1.5.2: 组织类型动态列表(替代硬编码)
+const orgTypes = ref<OrgTypeItem[]>([])
+
+// 组织类型 code -> name 的映射
+const orgTypeLabel = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {}
+  orgTypes.value.forEach((t) => {
+    map[t.code] = t.name
+  })
+  return map
+})
 
 // 扁平化组织单元（用于管理范围选择）
 const flatOrgs = computed<{ id: string; name: string }[]>(() => {
@@ -48,6 +54,93 @@ async function loadTree() {
   } finally {
     loading.value = false
   }
+}
+
+// v1.5.2: 加载组织类型列表
+async function loadOrgTypes() {
+  try {
+    orgTypes.value = await getOrgTypes()
+  } catch {
+    orgTypes.value = []
+  }
+}
+
+// v1.5.2: 组织类型管理对话框
+const orgTypeDialogVisible = ref(false)
+const orgTypeList = ref<OrgTypeItem[]>([])
+const orgTypeLoading = ref(false)
+const newOrgType = reactive({ code: '', name: '' })
+const orgTypeSubmitting = ref(false)
+
+async function openOrgTypeDialog() {
+  orgTypeDialogVisible.value = true
+  await refreshOrgTypeList()
+}
+
+async function refreshOrgTypeList() {
+  orgTypeLoading.value = true
+  try {
+    orgTypeList.value = await getOrgTypes()
+    orgTypes.value = orgTypeList.value // 同步更新下拉选项
+  } catch {
+    orgTypeList.value = []
+  } finally {
+    orgTypeLoading.value = false
+  }
+}
+
+async function handleCreateOrgType() {
+  if (!newOrgType.code.trim() || !newOrgType.name.trim()) {
+    ElMessage.warning('请填写代码和名称')
+    return
+  }
+  orgTypeSubmitting.value = true
+  try {
+    await createOrgType({
+      code: newOrgType.code.trim(),
+      name: newOrgType.name.trim(),
+    })
+    ElMessage.success('组织类型创建成功')
+    newOrgType.code = ''
+    newOrgType.name = ''
+    await refreshOrgTypeList()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || '创建失败'
+    ElMessage.error(msg)
+  } finally {
+    orgTypeSubmitting.value = false
+  }
+}
+
+async function handleDeleteOrgType(typeId: string, typeName: string) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除组织类型「${typeName}」吗?`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteOrgType(typeId)
+    ElMessage.success('组织类型已删除')
+    await refreshOrgTypeList()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || '删除失败'
+    ElMessage.error(msg)
+  }
+}
+
+// 格式化日期
+function formatDate(dateStr: string): string {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr)
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const hours = String(d.getHours()).padStart(2, '0')
+  const mins = String(d.getMinutes()).padStart(2, '0')
+  return `${d.getFullYear()}-${month}-${day} ${hours}:${mins}`
 }
 
 async function handleDownloadTemplate() {
@@ -131,7 +224,7 @@ const editFormRef = ref<FormInstance>()
 const editForm = reactive<{
   id: string
   name: string
-  org_type: OrgType
+  org_type: string
   description: string
 }>({
   id: '',
@@ -352,6 +445,7 @@ async function handleRemoveManager(scopeId: string, fullName: string) {
 onMounted(async () => {
   await loadTree()
   await loadUsers()
+  await loadOrgTypes()
 })
 </script>
 
@@ -360,6 +454,9 @@ onMounted(async () => {
     <div class="list-header">
       <h2 class="page-title">组织管理</h2>
       <div v-if="authStore.isAdmin" class="list-header-actions">
+        <el-button size="default" @click="openOrgTypeDialog">
+          <el-icon><Setting /></el-icon>组织类型
+        </el-button>
         <el-button size="default" @click="handleDownloadTemplate">
           <el-icon><Download /></el-icon>下载模板
         </el-button>
@@ -396,7 +493,7 @@ onMounted(async () => {
             <el-table-column label="类型" width="100">
               <template #default="{ row }">
                 <el-tag size="small" type="info" effect="plain">
-                  {{ orgTypeLabel[row.org_type as OrgType] || row.org_type }}
+                  {{ orgTypeLabel[row.org_type ] || row.org_type }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -566,10 +663,13 @@ onMounted(async () => {
           <el-input v-model="orgForm.name" placeholder="请输入组织名称" />
         </el-form-item>
         <el-form-item label="组织类型" prop="org_type">
-          <el-select v-model="orgForm.org_type" style="width: 100%">
-            <el-option label="部门" value="department" />
-            <el-option label="处室" value="division" />
-            <el-option label="小组" value="group" />
+          <el-select v-model="orgForm.org_type" style="width: 100%" placeholder="请选择组织类型">
+            <el-option
+              v-for="t in orgTypes"
+              :key="t.code"
+              :label="t.name"
+              :value="t.code"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="描述">
@@ -589,10 +689,13 @@ onMounted(async () => {
           <el-input v-model="editForm.name" placeholder="请输入组织名称" />
         </el-form-item>
         <el-form-item label="组织类型" prop="org_type">
-          <el-select v-model="editForm.org_type" style="width: 100%">
-            <el-option label="部门" value="department" />
-            <el-option label="处室" value="division" />
-            <el-option label="小组" value="group" />
+          <el-select v-model="editForm.org_type" style="width: 100%" placeholder="请选择组织类型">
+            <el-option
+              v-for="t in orgTypes"
+              :key="t.code"
+              :label="t.name"
+              :value="t.code"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="描述">
@@ -602,6 +705,82 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="editDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="editSubmitting" @click="handleEditSubmit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- v1.5.2: 组织类型管理对话框 -->
+    <el-dialog v-model="orgTypeDialogVisible" title="组织类型管理" width="720px">
+      <div v-loading="orgTypeLoading">
+        <el-table :data="orgTypeList" border style="width: 100%" size="small">
+          <el-table-column prop="name" label="名称" min-width="100" />
+          <el-table-column prop="code" label="代码" width="120" />
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">
+              <el-tag v-if="row.is_system" size="small" type="info">系统</el-tag>
+              <el-tag v-else size="small" type="success">自定义</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="创建人" width="120">
+            <template #default="{ row }">
+              {{ row.created_by_name || '系统' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="创建时间" width="160">
+            <template #default="{ row }">
+              {{ formatDate(row.created_at) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="100" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="!row.is_system && authStore.isSuperAdmin"
+                size="small"
+                type="danger"
+                link
+                @click="handleDeleteOrgType(row.id, row.name)"
+              >
+                删除
+              </el-button>
+              <span v-else style="color: #c0c4cc; font-size: 12px">—</span>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-divider />
+
+        <div style="font-size: 14px; font-weight: 500; margin-bottom: 12px">新增组织类型：</div>
+        <el-form :inline="true" label-width="60px">
+          <el-form-item label="名称">
+            <el-input
+              v-model="newOrgType.name"
+              placeholder="如：中心、委员会"
+              style="width: 180px"
+            />
+          </el-form-item>
+          <el-form-item label="代码">
+            <el-input
+              v-model="newOrgType.code"
+              placeholder="如：center、committee"
+              style="width: 180px"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-button
+              type="primary"
+              :loading="orgTypeSubmitting"
+              :disabled="!newOrgType.code.trim() || !newOrgType.name.trim()"
+              @click="handleCreateOrgType"
+            >
+              添加
+            </el-button>
+          </el-form-item>
+        </el-form>
+        <div style="color: #909399; font-size: 12px; margin-top: 4px">
+          代码为英文小写字母，创建后不可修改。系统预设类型（部门/科室/小组）不可删除。
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="orgTypeDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>

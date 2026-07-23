@@ -1250,3 +1250,145 @@ released_forced: 'warning',
 **最后更新**：2026-07-23
 **作者**：qloop 开发团队
 
+
+
+---
+
+## 第 20 章 v1.5.2: 自定义组织类型
+
+### 20.1 变更摘要
+
+v1.5.2 将组织类型从硬编码枚举改为数据库驱动的动态管理,支持管理员/超级管理员自定义添加组织类型(如中心、委员会等),系统预设类型(部门、科室、小组)不可删除。
+
+### 20.2 数据模型变更
+
+#### 新建表 `org_types`
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | UUID PK | 主键 |
+| code | VARCHAR(50) UNIQUE | 程序识别码(小写英文) |
+| name | VARCHAR(100) | 显示名称 |
+| is_system | BOOLEAN | 是否系统预设(不可删除) |
+| sort_order | INTEGER | 排序序号 |
+| created_by | UUID FK users.id | 创建人 |
+| is_active | BOOLEAN | 是否启用 |
+| created_at / updated_at | TIMESTAMPTZ | 时间戳 |
+
+#### 修改 `org_units.org_type`
+
+- 从 PostgreSQL 枚举类型 `org_type` 改为 `VARCHAR(50)`
+- 值从大写(DEPARTMENT/DIVISION/GROUP)迁移为小写(department/division/group)
+- 存储 `org_types.code` 作为引用
+- 旧枚举类型 `org_type` 已删除
+
+### 20.3 API 新增
+
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| GET | `/api/org-types` | ADMIN, SUPER_ADMIN | 获取类型列表(按 sort_order) |
+| POST | `/api/org-types` | ADMIN, SUPER_ADMIN | 创建自定义类型 |
+| DELETE | `/api/org-types/{type_id}` | SUPER_ADMIN | 删除自定义类型(系统类型不可删) |
+
+### 20.4 业务规则
+
+1. **系统预设类型**: department(部门)、division(科室)、group(小组),is_system=True,不可删除
+2. **创建类型**: code 不区分大小写检查唯一性,存储时统一转小写
+3. **删除类型**: 拒绝条件 — is_system=True 或存在引用此类型的 org_unit
+4. **组织创建/更新**: org_type 字段校验是否存在于 org_types 表,不存在返回 400
+5. **批量导入**: Excel 中的类型字符串直接使用,由 create_org_unit 校验合法性,非法类型回退为 department
+
+### 20.5 前端展示
+
+- 组织管理页面顶部新增「组织类型」按钮(admin/super_admin 可见)
+- 点击打开组织类型管理对话框:
+  - 表格显示所有类型(名称、代码、系统/自定义标签、创建人、创建时间)
+  - 系统类型无删除按钮
+  - 自定义类型仅 super_admin 可删除
+  - 底部新增类型表单(名称 + 代码)
+- 新增/编辑组织对话框中的类型下拉框改为动态从 API 获取
+- 移除前端硬编码的 3 个 el-option 和 orgTypeLabel 映射表
+
+### 20.6 数据库迁移 SQL
+
+```sql
+-- 1. 创建 org_types 表
+CREATE TABLE IF NOT EXISTS org_types (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code VARCHAR(50) UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    is_system BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_by UUID REFERENCES users(id),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 2. 插入预设类型
+INSERT INTO org_types (code, name, is_system, sort_order) VALUES
+    ('department', '部门', TRUE, 1),
+    ('division', '科室', TRUE, 2),
+    ('group', '小组', TRUE, 3)
+ON CONFLICT (code) DO NOTHING;
+
+-- 3. 迁移 org_units.org_type: enum -> varchar(lowercase)
+ALTER TABLE org_units ALTER COLUMN org_type DROP DEFAULT;
+ALTER TABLE org_units ALTER COLUMN org_type TYPE VARCHAR(50) USING lower(org_type::text);
+ALTER TABLE org_units ALTER COLUMN org_type SET DEFAULT 'department';
+
+-- 4. 删除旧枚举类型
+DROP TYPE IF EXISTS org_type;
+
+-- 5. 授权
+GRANT ALL PRIVILEGES ON TABLE org_types TO qloop;
+```
+
+### 20.7 文件变更清单
+
+#### 后端
+- `models/organization.py` — 移除 OrgType 枚举,新增 OrgTypeModel 表,OrgUnit.org_type 改为 String
+- `schemas/organization.py` — 移除 OrgType 引用,新增 OrgTypeCreate/OrgTypeResponse
+- `api/organizations.py` — 新增 org-types 端点,修复 audit log(.value 移除)
+- `services/org_service.py` — 新增 org_type CRUD 函数,create/update_org_unit 增加类型校验
+- `api/imports.py` — 移除 OrgType 依赖,直接使用字符串
+- `models/__init__.py` — OrgType → OrgTypeModel
+- `main.py` — 注册 org_type_router,版本号 1.5.2
+
+#### 前端
+- `types/index.ts` — OrgType 改为 string,新增 OrgTypeItem/OrgTypeCreate 接口
+- `api/organizations.ts` — 新增 getOrgTypes/createOrgType/deleteOrgType
+- `views/OrgManagement.vue` — 动态类型选项 + 组织类型管理对话框 + 移除硬编码
+
+### 20.8 测试验证(18 个用例)
+
+| TC ID | 测试内容 | 结果 |
+|-------|---------|------|
+| TC-01 | 健康检查版本=1.5.2 | PASS |
+| TC-02 | GET /api/org-types 返回 3 个系统类型 | PASS |
+| TC-03 | 系统类型为 department/division/group | PASS |
+| TC-04 | 所有预设类型 is_system=true | PASS |
+| TC-05 | 创建自定义类型 center | PASS |
+| TC-06 | 重复 code 创建返回 400 | PASS |
+| TC-07 | code 大小写不敏感检查 | PASS |
+| TC-08 | 创建使用自定义类型的组织 | PASS |
+| TC-09 | 使用不存在的类型创建返回 400 | PASS |
+| TC-10 | 组织树包含 center 类型 | PASS |
+| TC-11 | 删除系统类型返回 400 | PASS |
+| TC-12 | 删除有引用的自定义类型返回 400 | PASS |
+| TC-13 | 删除无引用的自定义类型返回 204 | PASS |
+| TC-14 | 删除后类型列表恢复 3 个 | PASS |
+| TC-15 | org_units.org_type 列类型为 VARCHAR | PASS |
+| TC-16 | org_units.org_type 值为小写 | PASS |
+| TC-17 | 旧枚举类型 org_type 已删除 | PASS |
+| TC-18 | created_by_name 在列表中填充 | PASS |
+
+### 20.9 升级说明
+
+#### 从 v1.5.1 升级
+
+1. 拉取最新代码
+2. 执行数据库迁移 SQL(见 20.6)
+3. 授予 qloop 用户 org_types 表权限
+4. 重启后端服务
+5. 重新构建前端

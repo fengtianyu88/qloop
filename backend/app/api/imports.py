@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
-from app.models.organization import AdminScope, OrgUnit, OrgType
+from app.models.organization import AdminScope, OrgUnit
 from app.models.project import Project
 from app.models.user import SystemRole, User
 from app.schemas.organization import OrgUnitCreate
@@ -300,10 +300,8 @@ async def import_orgs(
         try:
             name = str(row[0]).strip()
             type_str = str(row[1]).strip().lower() if len(row) > 1 and row[1] else "department"
-            try:
-                org_type = OrgType(type_str)
-            except ValueError:
-                org_type = OrgType.DEPARTMENT
+            # v1.5.2: org_type 改为字符串,由 create_org_unit 校验是否存在
+            org_type = type_str
             description = str(row[3]).strip() if len(row) > 3 and row[3] else None
 
             unit = await create_org_unit(

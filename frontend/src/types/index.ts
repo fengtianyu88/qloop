@@ -40,7 +40,32 @@ export type NotificationType =
   | 'system'
 
 /** 组织单元类型 */
-export type OrgType = 'department' | 'division' | 'group'
+export type OrgType = string
+
+// ---------------------------------------------------------------------------
+// 组织类型 v1.5.2
+// ---------------------------------------------------------------------------
+
+/** 组织类型项(从 /api/org-types 获取) */
+export interface OrgTypeItem {
+  id: string
+  code: string
+  name: string
+  is_system: boolean
+  sort_order: number
+  created_by: string | null
+  created_by_name: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+/** 创建组织类型请求 */
+export interface OrgTypeCreate {
+  code: string
+  name: string
+  sort_order?: number
+}
 
 // ---------------------------------------------------------------------------
 // 数据模型

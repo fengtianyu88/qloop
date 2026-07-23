@@ -6,6 +6,8 @@ import type {
   AdminScope,
   AdminScopeCreate,
   OrgTreeNode,
+  OrgTypeCreate,
+  OrgTypeItem,
   OrgUnit,
   OrgUnitCreate,
   OrgUnitUpdate,
@@ -55,4 +57,24 @@ export function getOrgAdminScopes(orgId: string): Promise<Array<{
 /** 删除组织单元(SUPER_ADMIN) */
 export function deleteOrg(id: string): Promise<void> {
   return request.delete(`/organizations/${id}`)
+}
+
+
+// ---------------------------------------------------------------------------
+// 组织类型管理 v1.5.2
+// ---------------------------------------------------------------------------
+
+/** 获取所有组织类型 */
+export function getOrgTypes(): Promise<OrgTypeItem[]> {
+  return request.get('/org-types')
+}
+
+/** 创建组织类型 */
+export function createOrgType(data: OrgTypeCreate): Promise<OrgTypeItem> {
+  return request.post('/org-types', data)
+}
+
+/** 删除组织类型(SUPER_ADMIN only) */
+export function deleteOrgType(id: string): Promise<void> {
+  return request.delete(`/org-types/${id}`)
 }
