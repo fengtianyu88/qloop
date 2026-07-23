@@ -1,6 +1,7 @@
 """Release management service."""
 
 import hashlib
+import logging
 import re
 import secrets
 import uuid
@@ -20,6 +21,8 @@ from app.storage.minio_client import (
 )
 from app.models.notification import NotificationType
 from app.services.notification_service import create_notification
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -432,9 +435,9 @@ async def confirm_release(
             )
             release.download_link = download_link
             release.link_expiry = datetime.now(timezone.utc) + timedelta(hours=168)
-        except Exception:
+        except Exception as exc:
             # If presigned URL generation fails, still mark as released
-            pass
+            logger.warning("生成下载链接失败: %s", exc)
 
     # 功能2.3: 为该版本的所有 ExternalRecipient 生成 access_token
     try:
@@ -584,7 +587,7 @@ async def delete_artifact(
     if release is None:
         return None
 
-    if release.status == ReleaseStatus.RELEASED:
+    if release.status in (ReleaseStatus.RELEASED, ReleaseStatus.RELEASED_FORCED):
         raise ValueError("Cannot delete artifact: release is already released")
 
     field_map = {
@@ -769,8 +772,8 @@ async def force_advance(
                     release.code_package_path, expiry_hours=168
                 )
                 release.link_expiry = datetime.now(timezone.utc) + timedelta(hours=168)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("生成下载链接失败: %s", exc)
         # 功能2.3: 为 ExternalRecipient 生成 access_token(force-advance 路径)
         try:
             recipients_result = await db.execute(

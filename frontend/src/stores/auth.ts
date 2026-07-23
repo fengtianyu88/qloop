@@ -3,7 +3,8 @@
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { login as loginApi } from '@/api/auth'
+import { ElMessage } from 'element-plus'
+import { login as loginApi, logout as logoutApi } from '@/api/auth'
 import { getCurrentUser } from '@/api/users'
 import type { LoginRequest, SystemRole, User } from '@/types'
 
@@ -64,14 +65,25 @@ export const useAuthStore = defineStore('auth', () => {
     if (!token.value) return
     try {
       user.value = await getCurrentUser()
-    } catch {
-      // 拉取失败则登出
-      logout()
+    } catch (error: any) {
+      // 仅 401(token 失效)才登出;其他错误(5xx/网络)保留登录态
+      if (error?.response?.status === 401) {
+        await logout()
+      } else {
+        console.error('获取用户信息失败:', error)
+        ElMessage.warning('用户信息加载失败,请检查网络')
+      }
     }
   }
 
   /** 退出登录 */
-  function logout(): void {
+  async function logout(): Promise<void> {
+    // 先尝试调后端登出接口,失败不阻塞前端清理
+    try {
+      await logoutApi()
+    } catch (e) {
+      console.error('后端登出失败:', e)
+    }
     token.value = ''
     user.value = null
     localStorage.removeItem('token')

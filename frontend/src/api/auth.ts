@@ -10,6 +10,11 @@ export function login(data: LoginRequest): Promise<TokenResponse> {
   return request.post('/auth/login', data)
 }
 
+/** 退出登录 */
+export function logout(): Promise<void> {
+  return request.post('/auth/logout')
+}
+
 /**
  * 刷新 access token(P1-9)
  * 用 refresh token 换取新的 access token;refresh token 失效时抛 401。

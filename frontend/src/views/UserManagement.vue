@@ -127,6 +127,16 @@ const form = reactive<UserCreate & { id?: string; is_active?: boolean }>({
   is_active: true,
 })
 
+// 密码强度校验：至少 8 位且须包含字母和数字；空值放行（编辑模式允许不改密码）
+const passwordValidator = (rule: any, value: string, callback: any) => {
+  if (!value) return callback()
+  if (value.length < 8) return callback(new Error('密码长度不少于 8 位'))
+  if (!/[a-zA-Z]/.test(value) || !/\d/.test(value)) {
+    return callback(new Error('密码须包含字母和数字'))
+  }
+  callback()
+}
+
 const rules = computed<FormRules>(() => {
   const base: FormRules = {
     username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
@@ -141,10 +151,10 @@ const rules = computed<FormRules>(() => {
   if (dialogMode.value === 'create') {
     base.password = [
       { required: true, message: '请输入密码', trigger: 'blur' },
-      { min: 6, message: '密码长度不少于 6 位', trigger: 'blur' },
+      { validator: passwordValidator, trigger: ['blur', 'change'] },
     ]
   } else {
-    base.password = [{ min: 6, message: '密码长度不少于 6 位', trigger: 'blur' }]
+    base.password = [{ validator: passwordValidator, trigger: ['blur', 'change'] }]
   }
   return base
 })

@@ -119,8 +119,18 @@ async def register_user(db: AsyncSession, data: RegisterRequest) -> User:
         The created User object.
 
     Raises:
-        ValueError: If username or email already exists.
+        ValueError: If username or email already exists, or if password
+            fails the strength check.
     """
+    # 密码强度校验:长度>=8 且含字母 且含数字
+    password = data.password or ""
+    if len(password) < 8:
+        raise ValueError("密码长度至少 8 位")
+    if not any(c.isalpha() for c in password):
+        raise ValueError("密码必须包含字母")
+    if not any(c.isdigit() for c in password):
+        raise ValueError("密码必须包含数字")
+
     existing_username = await db.execute(
         select(User).where(User.username == data.username)
     )

@@ -171,6 +171,10 @@ class LLMReview(Base):
     model_used: Mapped[Optional[str]] = mapped_column(
         String(200), nullable=True
     )
+    # v1.5.3: LLM 成本追踪(prompt/completion token 用量与延迟)
+    prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     triggered_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )

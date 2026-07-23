@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     # P2-11: CORS 允许的源(逗号分隔),通过环境变量配置
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost"
 
+    # 前端基础 URL(用于密码重置邮件中的链接前缀)
+    FRONTEND_BASE_URL: str = "http://localhost:5173"
+
     # P2-12: DEBUG 模式开关(生产环境禁止开启,由 validator 强制校验)
     DEBUG: bool = False
 
@@ -80,6 +83,19 @@ class Settings(BaseSettings):
             env = os.getenv("ENV", "development").lower()
             if env == "production":
                 raise ValueError("SECRET_KEY 不能使用默认值,请在 .env 中设置安全值")
+        return v
+
+    @field_validator("MINIO_SECRET_KEY")
+    @classmethod
+    def validate_minio_secret_key(cls, v: str) -> str:
+        """生产环境禁止使用不安全的默认 MINIO_SECRET_KEY。"""
+        if v in INSECURE_DEFAULTS:
+            import os
+            env = os.getenv("ENV", "development").lower()
+            if env == "production":
+                raise ValueError(
+                    "MINIO_SECRET_KEY 不能使用默认值,请在 .env 中设置安全值"
+                )
         return v
 
     @field_validator("DEBUG")

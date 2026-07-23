@@ -47,10 +47,28 @@ class LLMResponse:
     model_used: Optional[str]
     success: bool
     error: Optional[str] = None
+    # v1.5.3: token 用量与截断标注(成本追踪 / 截断告警)
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    truncated: bool = False
 
     @classmethod
-    def ok(cls, content: str, model_used: str) -> "LLMResponse":
-        return cls(content=content, model_used=model_used, success=True)
+    def ok(
+        cls,
+        content: str,
+        model_used: str,
+        prompt_tokens: Optional[int] = None,
+        completion_tokens: Optional[int] = None,
+        truncated: bool = False,
+    ) -> "LLMResponse":
+        return cls(
+            content=content,
+            model_used=model_used,
+            success=True,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            truncated=truncated,
+        )
 
     @classmethod
     def failure(cls, error: str, model_used: Optional[str] = None) -> "LLMResponse":
@@ -189,7 +207,25 @@ async def _call_openai(
             model_used=model.model_name,
         )
 
-    return LLMResponse.ok(content=content, model_used=model.model_name)
+    # v1.5.3: 提取 token 用量与截断标注(成本追踪)
+    usage = data.get("usage", {}) or {}
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    truncated = False
+    try:
+        finish_reason = data["choices"][0].get("finish_reason")
+        if finish_reason == "length":
+            truncated = True
+    except (KeyError, IndexError, TypeError):
+        pass
+
+    return LLMResponse.ok(
+        content=content,
+        model_used=model.model_name,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        truncated=truncated,
+    )
 
 
 async def _call_openai_stream(
@@ -393,7 +429,21 @@ async def _call_anthropic(
             model_used=model.model_name,
         )
 
-    return LLMResponse.ok(content=content, model_used=model.model_name)
+    # v1.5.3: 提取 token 用量与截断标注(成本追踪)
+    usage = data.get("usage", {}) or {}
+    prompt_tokens = usage.get("input_tokens")
+    completion_tokens = usage.get("output_tokens")
+    truncated = False
+    if data.get("stop_reason") == "max_tokens":
+        truncated = True
+
+    return LLMResponse.ok(
+        content=content,
+        model_used=model.model_name,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        truncated=truncated,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,16 @@ const router = useRouter()
 // 当前激活的菜单
 const activeMenu = computed(() => route.path)
 
+// 全局面包屑: 过滤 route.matched 中带 meta.title 的路由
+const breadcrumbs = computed(() =>
+  route.matched
+    .filter((r) => r.meta?.title)
+    .map((r) => ({ path: r.path, title: r.meta.title as string })),
+)
+
+// 顶栏标题: 优先显示当前页标题,回退到站点名称
+const headerTitle = computed(() => (route.meta.title as string) || APP_TITLE.value)
+
 // 菜单项：根据角色计算
 interface MenuItem {
   index: string
@@ -95,7 +105,7 @@ async function handleLogout() {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    authStore.logout()
+    await authStore.logout()
     ElMessage.success('已退出登录')
     router.push('/login')
   } catch {
@@ -140,7 +150,7 @@ onMounted(async () => {
       <!-- 顶栏 -->
       <el-header class="layout-header">
         <div class="header-left">
-          <span class="header-title">{{ APP_TITLE }}</span>
+          <span class="header-title">{{ headerTitle }}</span>
         </div>
         <div class="header-right">
           <!-- 通知 -->
@@ -200,13 +210,24 @@ onMounted(async () => {
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-
-          <el-button type="danger" plain size="small" @click="handleLogout">退出登录</el-button>
         </div>
       </el-header>
 
       <!-- 内容区域 -->
       <el-main class="layout-main">
+        <el-breadcrumb
+          v-if="breadcrumbs.length"
+          separator="/"
+          style="margin-bottom: 12px; padding: 12px 20px 0"
+        >
+          <el-breadcrumb-item
+            v-for="item in breadcrumbs"
+            :key="item.path"
+            :to="item.path"
+          >
+            {{ item.title }}
+          </el-breadcrumb-item>
+        </el-breadcrumb>
         <router-view />
       </el-main>
     </el-container>

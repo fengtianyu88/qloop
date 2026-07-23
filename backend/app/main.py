@@ -2,10 +2,12 @@
 
 import logging
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.requests import Request
+from fastapi.responses import JSONResponse, PlainTextResponse
+from sqlalchemy import text
 
 from app.api.imports import router as imports_router
 from app.api.my_tasks import router as my_tasks_router
@@ -21,6 +23,7 @@ from app.api.search import router as search_router
 from app.api.system_settings import router as system_settings_router
 from app.api.users import router as users_router
 from app.config import settings
+from app.database import async_session_factory
 from app.services.init_service import ensure_default_review_rules
 
 # P2-10: 启动时配置日志级别(可通过 LOG_LEVEL 环境变量调整)
@@ -30,6 +33,9 @@ if settings.LOG_LEVEL == "DEBUG":
     logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
+
+# 轻量级 HTTP 计数器(模块级,不引入 prometheus-client)
+_http_counters = {"requests_total": 0, "errors_total": 0}
 
 
 @asynccontextmanager
@@ -56,7 +62,7 @@ def create_app() -> FastAPI:
             f"{settings.APP_NAME} 后端 API — 质量闭环 · 测试驱动开发。"
             f"覆盖项目管理、版本释放流程、LLM 评审与审计日志等能力。"
         ),
-        version="1.5.2",
+        version="1.5.3",
         lifespan=lifespan,
     )
 
@@ -99,6 +105,29 @@ def create_app() -> FastAPI:
         )
         return response
 
+    # trace_id 中间件:为每个请求生成唯一 trace_id,便于日志追踪
+    @app.middleware("http")
+    async def add_trace_id(request: Request, call_next):
+        """为每个请求生成 trace_id 并附加到响应头 X-Trace-Id。"""
+        request.state.trace_id = str(uuid4())[:8]
+        response = await call_next(request)
+        response.headers["X-Trace-Id"] = request.state.trace_id
+        return response
+
+    # HTTP 计数中间件:统计请求数与错误数(供 /metrics 使用)
+    @app.middleware("http")
+    async def count_requests(request: Request, call_next):
+        """统计请求总数与错误总数(模块级计数器,非线程安全,仅用于轻量监控)。"""
+        _http_counters["requests_total"] += 1
+        try:
+            response = await call_next(request)
+        except Exception:
+            _http_counters["errors_total"] += 1
+            raise
+        if response.status_code >= 500:
+            _http_counters["errors_total"] += 1
+        return response
+
     # Register all API routers
     app.include_router(imports_router)
     app.include_router(my_tasks_router)
@@ -122,8 +151,108 @@ def create_app() -> FastAPI:
         return {
             "status": "healthy",
             "app": settings.APP_NAME,
-            "version": "1.5.2",
+            "version": "1.5.3",
         }
+
+    @app.get("/api/ready", tags=["health"])
+    async def ready_check():
+        """Readiness probe: 检查 DB / Redis / MinIO / Celery 连通性。
+
+        任一组件不可用返回 503,全部正常返回 200。
+        """
+        checks: dict[str, bool] = {
+            "db": False,
+            "redis": False,
+            "minio": False,
+            "celery": False,
+        }
+
+        # DB: SELECT 1
+        try:
+            async with async_session_factory() as session:
+                await session.execute(text("SELECT 1"))
+            checks["db"] = True
+        except Exception as exc:
+            logger.warning("Readiness check DB failed: %s", exc)
+
+        # Redis: ping
+        try:
+            from app.redis_client import get_redis
+
+            redis = await get_redis()
+            await redis.ping()
+            checks["redis"] = True
+        except Exception as exc:
+            logger.warning("Readiness check Redis failed: %s", exc)
+
+        # MinIO: bucket_exists
+        try:
+            from app.storage.minio_client import minio_client
+
+            if minio_client.bucket_exists(settings.MINIO_BUCKET):
+                checks["minio"] = True
+            else:
+                logger.warning(
+                    "Readiness check MinIO: bucket %s does not exist",
+                    settings.MINIO_BUCKET,
+                )
+        except Exception as exc:
+            logger.warning("Readiness check MinIO failed: %s", exc)
+
+        # Celery: inspect.ping
+        try:
+            from app.tasks.celery_app import celery_app
+
+            inspect = celery_app.control.inspect(timeout=1)
+            ping_result = inspect.ping()
+            if ping_result is not None:
+                checks["celery"] = True
+            else:
+                logger.warning("Readiness check Celery: no workers responded")
+        except Exception as exc:
+            logger.warning("Readiness check Celery failed: %s", exc)
+
+        all_ok = all(checks.values())
+        if not all_ok:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "checks": checks},
+            )
+        return {"status": "ready", "checks": checks}
+
+    @app.get("/api/metrics", tags=["monitoring"])
+    async def metrics():
+        """Prometheus 兼容的轻量级 metrics 端点(text exposition format)。
+
+        仅暴露 HTTP 请求总数与错误总数,无需 prometheus-client 依赖。
+        """
+        lines = [
+            "# HELP http_requests_total Total HTTP requests",
+            "# TYPE http_requests_total counter",
+            f"http_requests_total {_http_counters['requests_total']}",
+            "# HELP http_errors_total Total HTTP errors (5xx / exceptions)",
+            "# TYPE http_errors_total counter",
+            f"http_errors_total {_http_counters['errors_total']}",
+        ]
+        return PlainTextResponse(
+            content="\n".join(lines) + "\n",
+            media_type="text/plain; version=0.0.4",
+        )
+
+    # 全局异常处理器:兜底未捕获异常,避免向前端泄露内部栈
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        logger.exception(
+            "Unhandled exception: %s %s", request.method, request.url.path
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "服务器内部错误，请联系管理员"},
+        )
+
+    @app.exception_handler(ValueError)
+    async def value_error_handler(request: Request, exc: ValueError):
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     return app
 

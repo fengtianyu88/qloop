@@ -2,6 +2,7 @@
  * 路由配置
  */
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import Layout from '@/components/Layout.vue'
 import { useSiteInfoStore } from '@/stores/siteInfo'
@@ -101,7 +102,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',
-    redirect: '/home',
+    component: () => import('@/views/NotFound.vue'),
   },
 ]
 
@@ -162,12 +163,21 @@ router.beforeEach(async (to, _from, next) => {
   if (requiredRoles && requiredRoles.length > 0) {
     const role = authStore.user?.system_role
     if (!role || !requiredRoles.includes(role)) {
+      ElMessage.warning('您没有权限访问该页面')
       next({ path: '/home' })
       return
     }
   }
 
   next()
+})
+
+// 路由错误处理：动态导入失败（系统已更新）时自动刷新
+router.onError((err) => {
+  if (/Loading chunk|Failed to fetch dynamically imported module/i.test(err.message)) {
+    ElMessage.error('系统已更新，正在刷新...')
+    setTimeout(() => location.reload(), 1200)
+  }
 })
 
 export default router

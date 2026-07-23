@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Download, Upload } from '@element-plus/icons-vue'
@@ -13,6 +13,9 @@ const authStore = useAuthStore()
 
 const projectList = ref<Project[]>([])
 const loading = ref(false)
+// 客户端分页（后端 /projects 不支持分页参数）
+const currentPage = ref(1)
+const pageSize = ref(10)
 
 // 创建项目对话框
 const dialogVisible = ref(false)
@@ -166,6 +169,28 @@ const filteredRows = computed(() => {
   })
 })
 
+// 分页总数（客户端分页：基于筛选后的数据量）
+const total = computed(() => filteredRows.value.length)
+// 当前页数据（切片）
+const pagedRows = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredRows.value.slice(start, start + pageSize.value)
+})
+
+// 筛选结果变化后,若当前页超出范围则回到第 1 页
+watch(filteredRows, () => {
+  const maxPage = Math.max(1, Math.ceil(filteredRows.value.length / pageSize.value))
+  if (currentPage.value > maxPage) currentPage.value = 1
+})
+
+function handlePageChange(page: number) {
+  currentPage.value = page
+}
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+}
+
 function clearColFilter(prop: string) {
   colFilters[prop].input = ''
   colFilters[prop].selected = []
@@ -232,7 +257,7 @@ onMounted(() => {
 
     <el-card class="table-card" shadow="never">
       <el-table
-        :data="filteredRows"
+        :data="pagedRows"
         v-loading="loading"
         border
         stripe
@@ -566,6 +591,19 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
+
+      <div class="pagination-wrapper">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[10, 20, 50, 100]"
+          :hide-on-single-page="false"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="handlePageChange"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </el-card>
 
     <!-- 创建项目对话框 -->
@@ -669,5 +707,11 @@ onMounted(() => {
 .filter-actions {
   text-align: right;
   margin-top: 8px;
+}
+
+.pagination-wrapper {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

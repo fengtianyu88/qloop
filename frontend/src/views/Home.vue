@@ -353,6 +353,7 @@ onMounted(() => {
             </div>
           </template>
           <el-table v-if="myTodo.length > 0" :data="myTodo" border stripe size="small" max-height="320" @row-click="(row: MyTaskItem) => router.push(`/releases/${row.release_id}`)">
+            <template #empty><el-empty description="暂无数据" /></template>
             <el-table-column prop="project_name" label="项目" min-width="160" show-overflow-tooltip />
             <el-table-column prop="version_number" label="版本号" width="120" show-overflow-tooltip />
             <el-table-column prop="my_role" label="我的角色" width="100" />
@@ -387,6 +388,7 @@ onMounted(() => {
             </div>
           </template>
           <el-table v-if="myDone.length > 0" :data="myDone" border stripe size="small" max-height="320" @row-click="(row: MyTaskItem) => router.push(`/releases/${row.release_id}`)">
+            <template #empty><el-empty description="暂无数据" /></template>
             <el-table-column prop="project_name" label="项目" min-width="160" show-overflow-tooltip />
             <el-table-column prop="version_number" label="版本号" width="120" show-overflow-tooltip />
             <el-table-column prop="my_role" label="我的角色" width="100" />
@@ -449,6 +451,7 @@ onMounted(() => {
 
       <el-card class="table-card" shadow="never">
         <el-table :data="filteredReleaseRows" v-loading="releaseLoading" border stripe>
+          <template #empty><el-empty description="暂无数据" /></template>
           <!-- 项目名称 -->
           <el-table-column prop="project_name" label="项目名称" min-width="160" show-overflow-tooltip sortable>
             <template #header>
@@ -761,6 +764,7 @@ onMounted(() => {
 
       <el-card class="table-card" shadow="never">
         <el-table :data="projectList" v-loading="projectLoading" border stripe>
+          <template #empty><el-empty description="暂无数据" /></template>
           <el-table-column prop="name" label="项目名称" min-width="160" show-overflow-tooltip />
           <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip>
             <template #default="{ row }">{{ row.description || '—' }}</template>

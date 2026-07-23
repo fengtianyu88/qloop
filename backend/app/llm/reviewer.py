@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -319,12 +320,15 @@ async def execute_review(
         model_name = rule.llm_model.model_name if rule.llm_model else "未知"
         await _emit("step", f"连接 LLM({model_name})...")
         await _emit("step", "LLM 连接成功,等待流式返回...")
+        # v1.5.3: 记录 LLM 调用耗时(成本追踪)
+        t0 = time.perf_counter()
         llm_response: LLMResponse = await call_llm_with_fallback(
             primary_model=rule.llm_model,
             fallback_model=fallback_model,
             prompt=prompt,
             progress_callback=progress_callback,
         )
+        latency_ms = int((time.perf_counter() - t0) * 1000)
         if llm_response.success:
             await _emit("step", f"LLM 返回成功({llm_response.model_used}, {len(llm_response.content or '')} 字符)")
         else:
@@ -340,11 +344,20 @@ async def execute_review(
         # 8. Update the review record.
         review.total_score = float(parsed.get("total_score", 0) or 0)
         review.dimension_scores = parsed.get("dimension_scores") or {}
-        review.conclusion = parsed.get("conclusion")
+        # v1.5.3: 若 LLM 输出因 max_tokens 被截断,在 conclusion 中追加标注
+        conclusion = parsed.get("conclusion") or ""
+        if llm_response.truncated:
+            truncation_note = "[注意: LLM输出因max_tokens限制被截断，结果可能不完整]"
+            conclusion = f"{conclusion}\n\n{truncation_note}" if conclusion else truncation_note
+        review.conclusion = conclusion
         review.suggestions = parsed.get("suggestions")
         review.risk_points = parsed.get("risk_points")
         review.model_used = llm_response.model_used
         review.raw_response = llm_response.content
+        # v1.5.3: 写入成本追踪字段
+        review.prompt_tokens = llm_response.prompt_tokens
+        review.completion_tokens = llm_response.completion_tokens
+        review.latency_ms = latency_ms
         review.completed_at = datetime.now(timezone.utc)
 
         # 9. Decide pass / fail.

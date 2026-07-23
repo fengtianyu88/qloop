@@ -26,6 +26,8 @@ const authStore = useAuthStore()
 const projectId = computed(() => route.params.id as string)
 const project = ref<Project | null>(null)
 const loading = ref(false)
+// 加载失败错误态
+const loadError = ref(false)
 
 // 用户字典（仅 admin 可获取完整用户列表用于姓名解析与选择）
 const userMap = ref<Record<string, User>>({})
@@ -107,9 +109,11 @@ function userName(id: string | null | undefined): string {
 
 async function loadProject() {
   loading.value = true
+  loadError.value = false
   try {
     project.value = await getProject(projectId.value)
   } catch {
+    loadError.value = true
     // 错误已统一提示
   } finally {
     loading.value = false
@@ -240,11 +244,20 @@ async function handleEditMember() {
     // 角色变更二次确认:避免误操作导致权限变化
     if (editingMember.value && editingMember.value.originalRole !== editForm.project_role) {
       try {
-        await ElMessageBox.confirm(
-          `确认将成员角色从「${roleLabel(editingMember.value.originalRole)}」改为「${roleLabel(editForm.project_role)}」吗?\n\n角色变更会影响该成员的权限,请确认操作。`,
-          '角色变更确认',
-          { type: 'warning', confirmButtonText: '确认变更', cancelButtonText: '取消' },
-        )
+        if (editForm.project_role === 'project_manager') {
+          // 项目经理角色变更二次确认:会影响项目权限分配
+          await ElMessageBox.confirm(
+            '确认将该成员设为项目经理？此操作会影响项目权限分配。',
+            '角色变更确认',
+            { type: 'warning', confirmButtonText: '确认变更', cancelButtonText: '取消' },
+          )
+        } else {
+          await ElMessageBox.confirm(
+            `确认将成员角色从「${roleLabel(editingMember.value.originalRole)}」改为「${roleLabel(editForm.project_role)}」吗?\n\n角色变更会影响该成员的权限,请确认操作。`,
+            '角色变更确认',
+            { type: 'warning', confirmButtonText: '确认变更', cancelButtonText: '取消' },
+          )
+        }
       } catch {
         return  // 用户取消,不执行保存
       }
@@ -353,8 +366,20 @@ onMounted(async () => {
       <h2 class="page-title">项目详情</h2>
     </div>
 
+    <!-- 加载失败错误态 -->
+    <el-result
+      v-if="loadError"
+      icon="error"
+      title="加载失败"
+      sub-title="项目信息加载失败，请重试"
+    >
+      <template #extra>
+        <el-button type="primary" @click="loadProject">重新加载</el-button>
+      </template>
+    </el-result>
+
     <!-- 功能1: 项目概览卡片 -->
-    <el-row :gutter="16" class="project-overview">
+    <el-row v-if="!loadError" :gutter="16" class="project-overview">
       <el-col :span="4"><div class="overview-card"><div class="num">{{ stats.total }}</div><div class="label">版本总数</div></div></el-col>
       <el-col :span="4"><div class="overview-card draft"><div class="num">{{ stats.draft }}</div><div class="label">草稿</div></div></el-col>
       <el-col :span="4"><div class="overview-card review"><div class="num">{{ stats.in_review }}</div><div class="label">评审中</div></div></el-col>

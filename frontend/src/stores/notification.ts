@@ -2,22 +2,55 @@
  * 通知 Store
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { getNotifications, markAllAsRead, markAsRead } from '@/api/notifications'
 import type { Notification } from '@/types'
+
+// 跨标签页通知同步 channel(SSR 或不支持 BroadcastChannel 的环境降级为 null)
+let bc: BroadcastChannel | null = null
+try {
+  bc = new BroadcastChannel('qloop-notif')
+} catch {
+  bc = null
+}
 
 export const useNotificationStore = defineStore('notification', () => {
   const unreadCount = ref<number>(0)
   const notifications = ref<Notification[]>([])
+  // 记录最近一次拉取错误(可选,便于调试)
+  const lastError = ref<string | null>(null)
+
+  // 监听其他标签页发来的未读数同步消息
+  if (bc) {
+    bc.onmessage = (event: MessageEvent) => {
+      const data = event.data
+      if (data?.type === 'unread' && typeof data.count === 'number') {
+        unreadCount.value = data.count
+      }
+    }
+  }
+
+  // 当本地 unreadCount 变化时广播到其他标签页
+  watch(unreadCount, (newCount) => {
+    if (bc) {
+      try {
+        bc.postMessage({ type: 'unread', count: newCount })
+      } catch {
+        // 广播失败忽略
+      }
+    }
+  })
 
   /** 拉取未读通知数量 */
   async function fetchUnreadCount(): Promise<void> {
     try {
       const res = await getNotifications({ unread_only: true, page: 1, page_size: 1 })
       unreadCount.value = res.total
-    } catch {
-      // 忽略错误，避免影响主流程
-      unreadCount.value = 0
+      lastError.value = null
+    } catch (e) {
+      // 失败不清零,保留原值,仅记录错误
+      console.error('拉取未读通知数量失败:', e)
+      lastError.value = String(e)
     }
   }
 
@@ -56,6 +89,7 @@ export const useNotificationStore = defineStore('notification', () => {
   return {
     unreadCount,
     notifications,
+    lastError,
     fetchUnreadCount,
     fetchNotifications,
     markNotificationRead,

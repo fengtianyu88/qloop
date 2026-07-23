@@ -184,6 +184,12 @@ async def upload_code_package_endpoint(
         )
 
     file_data = await file.read()
+    # 流式二次校验:即使 file.size 被绕过或为 None,实际读取后仍拦截超限
+    if len(file_data) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"文件大小超过限制({settings.MAX_UPLOAD_SIZE_MB}MB)"
+        )
     content_type = file.content_type or "application/octet-stream"
 
     try:
@@ -239,6 +245,12 @@ async def upload_test_report_endpoint(
         )
 
     file_data = await file.read()
+    # 流式二次校验:即使 file.size 被绕过或为 None,实际读取后仍拦截超限
+    if len(file_data) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"文件大小超过限制({settings.MAX_UPLOAD_SIZE_MB}MB)"
+        )
     content_type = file.content_type or "application/octet-stream"
 
     try:
@@ -293,6 +305,12 @@ async def upload_review_report_endpoint(
         )
 
     file_data = await file.read()
+    # 流式二次校验:即使 file.size 被绕过或为 None,实际读取后仍拦截超限
+    if len(file_data) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"文件大小超过限制({settings.MAX_UPLOAD_SIZE_MB}MB)"
+        )
     content_type = file.content_type or "application/octet-stream"
 
     try:
@@ -604,8 +622,8 @@ async def delete_release_artifact(
 
     release = await _get_release_with_project_access(db, release_id, current_user)
 
-    # Released releases are immutable
-    if release.status == ReleaseStatus.RELEASED:
+    # Released releases are immutable(包含正常释放与特批放行释放)
+    if release.status in (ReleaseStatus.RELEASED, ReleaseStatus.RELEASED_FORCED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot delete artifact: release is already released",

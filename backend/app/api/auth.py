@@ -223,7 +223,7 @@ async def forgot_password(
         # Send reset email asynchronously via Celery
         from app.tasks.email_tasks import send_email
 
-        reset_link = f"http://localhost:5173/reset-password?token={reset_token}"
+        reset_link = f"{settings.FRONTEND_BASE_URL}/reset-password?token={reset_token}"
         subject = f"【{settings.APP_SHORT_NAME}】密码重置"
         body = (
             f"{user.full_name}，您好：\n\n"

@@ -394,6 +394,19 @@ async function doUploadCode() {
     ElMessage.warning('请先选择代码包文件')
     return
   }
+  // 文件大小前端校验（不超过 200MB）
+  const MAX_SIZE = 200 * 1024 * 1024
+  if (codeFile.value.size > MAX_SIZE) {
+    ElMessage.error('文件不能超过 200MB')
+    return
+  }
+  // 文件类型白名单校验
+  const allowExt = ['zip', 'tar', 'gz', 'rar', '7z']
+  const ext = codeFile.value.name.split('.').pop()?.toLowerCase()
+  if (!ext || !allowExt.includes(ext)) {
+    ElMessage.error('不支持的文件类型')
+    return
+  }
   codeUploading.value = true
   codeUploadProgress.value = 0
   try {
@@ -426,6 +439,19 @@ async function doUploadTest() {
     ElMessage.warning('请先选择测试报告文件')
     return
   }
+  // 文件大小前端校验（不超过 200MB）
+  const MAX_SIZE = 200 * 1024 * 1024
+  if (testFile.value.size > MAX_SIZE) {
+    ElMessage.error('文件不能超过 200MB')
+    return
+  }
+  // 文件类型白名单校验
+  const allowExt = ['pdf', 'doc', 'docx', 'xlsx', 'zip']
+  const ext = testFile.value.name.split('.').pop()?.toLowerCase()
+  if (!ext || !allowExt.includes(ext)) {
+    ElMessage.error('不支持的文件类型')
+    return
+  }
   testUploading.value = true
   testUploadProgress.value = 0
   try {
@@ -456,6 +482,19 @@ async function doUploadReviewReport() {
     ElMessage.warning('请先选择评审报告文件')
     return
   }
+  // 文件大小前端校验（不超过 200MB）
+  const MAX_SIZE = 200 * 1024 * 1024
+  if (reviewFile.value.size > MAX_SIZE) {
+    ElMessage.error('文件不能超过 200MB')
+    return
+  }
+  // 文件类型白名单校验
+  const allowExt = ['pdf', 'doc', 'docx', 'zip']
+  const ext = reviewFile.value.name.split('.').pop()?.toLowerCase()
+  if (!ext || !allowExt.includes(ext)) {
+    ElMessage.error('不支持的文件类型')
+    return
+  }
   reviewUploading.value = true
   reviewUploadProgress.value = 0
   try {
@@ -483,6 +522,11 @@ async function doUploadReviewReport() {
 
 // 触发评审
 async function handleTriggerReview() {
+  // 并发评审禁用：已有评审进行中时阻止重复触发
+  if (reviewInProgress.value) {
+    ElMessage.warning('当前已有评审进行中，请等待完成')
+    return
+  }
   triggering.value = true
   // 先打开抽屉,显示"正在提交评审请求..."
   openReviewDrawer()
@@ -566,13 +610,22 @@ function openLink(link: string) {
 }
 
 // 下载单个交付物（代码包/测试报告/评审报告）
-// 使用 axios blob 方式下载（自动携带 Authorization header）
+// 使用 download-by-token 端点：支持 token query 参数 + 302 跳转到 MinIO 预签名 URL
+// 满足硬约束：所有下载按钮必须用 302 跳转到 MinIO 预签名 URL
 const downloading = ref<string>('')
 
 async function downloadArtifactFile(fileType: 'code_package' | 'test_report' | 'review_report') {
+  const token = localStorage.getItem('token') || sessionStorage.getItem('token')
+  if (!token) {
+    ElMessage.error('请先登录')
+    return
+  }
   downloading.value = fileType
   try {
-    await downloadArtifact(releaseId.value, fileType)
+    window.open(
+      `/api/releases/${releaseId.value}/download-by-token/${fileType}?token=${encodeURIComponent(token)}`,
+      '_blank',
+    )
     ElMessage.success('下载已开始')
   } catch {
     // 错误已统一提示
@@ -1253,7 +1306,7 @@ onMounted(async () => {
             <div>评审未通过，请根据评审建议修改后重新上传。</div>
           </template>
           <template #action>
-            <el-button type="primary" size="small" @click="handleTriggerReview">
+            <el-button type="primary" size="small" :disabled="reviewInProgress" @click="handleTriggerReview">
               重新触发评审
             </el-button>
           </template>
@@ -1420,15 +1473,19 @@ onMounted(async () => {
                   />
                 </template>
                 <template v-if="release.status === 'code_pending_review'">
-                  <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
+                  <el-button type="primary" size="small" :loading="triggering" :disabled="reviewInProgress" @click="handleTriggerReview">
                     <el-icon><Refresh /></el-icon>触发评审
                   </el-button>
-                  <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
-                    <el-icon><Clock /></el-icon>稍后评审
-                  </el-button>
-                  <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
-                    <el-icon><Promotion /></el-icon>特批放行
-                  </el-button>
+                  <el-tooltip content="暂不评审，稍后可继续" placement="top">
+                    <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
+                      <el-icon><Clock /></el-icon>稍后评审
+                    </el-button>
+                  </el-tooltip>
+                  <el-tooltip content="跳过当前阶段评审，直接进入下一阶段" placement="top">
+                    <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
+                      <el-icon><Promotion /></el-icon>特批放行
+                    </el-button>
+                  </el-tooltip>
                 </template>
               </div>
             </div>
@@ -1515,15 +1572,19 @@ onMounted(async () => {
                   />
                 </template>
                 <template v-if="release.status === 'test_pending_review'">
-                  <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
+                  <el-button type="primary" size="small" :loading="triggering" :disabled="reviewInProgress" @click="handleTriggerReview">
                     <el-icon><Refresh /></el-icon>触发评审
                   </el-button>
-                  <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
-                    <el-icon><Clock /></el-icon>稍后评审
-                  </el-button>
-                  <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
-                    <el-icon><Promotion /></el-icon>特批放行
-                  </el-button>
+                  <el-tooltip content="暂不评审，稍后可继续" placement="top">
+                    <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
+                      <el-icon><Clock /></el-icon>稍后评审
+                    </el-button>
+                  </el-tooltip>
+                  <el-tooltip content="跳过当前阶段评审，直接进入下一阶段" placement="top">
+                    <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
+                      <el-icon><Promotion /></el-icon>特批放行
+                    </el-button>
+                  </el-tooltip>
                 </template>
               </div>
             </div>
@@ -1610,15 +1671,19 @@ onMounted(async () => {
                   />
                 </template>
                 <template v-if="release.status === 'expert_pending_review'">
-                  <el-button type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
+                  <el-button type="primary" size="small" :loading="triggering" :disabled="reviewInProgress" @click="handleTriggerReview">
                     <el-icon><Refresh /></el-icon>触发评审
                   </el-button>
-                  <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
-                    <el-icon><Clock /></el-icon>稍后评审
-                  </el-button>
-                  <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
-                    <el-icon><Promotion /></el-icon>特批放行
-                  </el-button>
+                  <el-tooltip content="暂不评审，稍后可继续" placement="top">
+                    <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
+                      <el-icon><Clock /></el-icon>稍后评审
+                    </el-button>
+                  </el-tooltip>
+                  <el-tooltip content="跳过当前阶段评审，直接进入下一阶段" placement="top">
+                    <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
+                      <el-icon><Promotion /></el-icon>特批放行
+                    </el-button>
+                  </el-tooltip>
                 </template>
               </div>
             </div>
@@ -1702,7 +1767,7 @@ onMounted(async () => {
                   :value="opt.value"
                 />
               </el-select>
-              <el-button v-if="canTrigger" type="primary" size="small" :loading="triggering" @click="handleTriggerReview">
+              <el-button v-if="canTrigger" type="primary" size="small" :loading="triggering" :disabled="reviewInProgress" @click="handleTriggerReview">
                 <el-icon><Refresh /></el-icon>触发评审
               </el-button>
               <el-tooltip content="跳过当前 LLM 评审,直接进入下一阶段(开发/测试人员可用)" placement="top">
