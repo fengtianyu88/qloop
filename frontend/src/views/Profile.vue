@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { getCurrentUser, updateUser } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
-import { roleLabel } from '@/utils/status'
+import { systemRoleLabel } from '@/utils/status'
 import type { UserUpdate } from '@/types'
 
 const authStore = useAuthStore()

@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notification'
-import { roleLabel } from '@/utils/status'
+import { systemRoleLabel } from '@/utils/status'
 import type { Notification } from '@/types'
 import { useSiteInfoStore } from '@/stores/siteInfo'
 
