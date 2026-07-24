@@ -59,7 +59,7 @@ const projectLoading = ref(false)
 
 // 状态选项
 const statusOptions: { label: string; value: ReleaseStatus }[] = [
-  { label: '草稿', value: 'draft' },
+  { label: '待上传代码', value: 'draft' },
   { label: '代码待评审', value: 'code_pending_review' },
   { label: '测试报告待评审', value: 'test_pending_review' },
   { label: '专家报告待评审', value: 'expert_pending_review' },
@@ -695,7 +695,7 @@ onMounted(() => {
               </div>
             </template>
             <template #default="{ row }">
-              <el-tag :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+              <el-tag :type="statusTagType(row.status)">{{ statusLabel(row.status, row) }}</el-tag>
             </template>
           </el-table-column>
 

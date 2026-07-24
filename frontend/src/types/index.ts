@@ -11,7 +11,7 @@
 export type SystemRole = 'guest' | 'developer' | 'admin' | 'super_admin'
 
 /** 项目内角色 */
-export type ProjectRole = 'project_manager' | 'developer' | 'tester' | 'external_expert'
+export type ProjectRole = 'project_manager' | 'developer' | 'tester'
 
 /** 释放状态：覆盖 7 步评审流程 */
 export type ReleaseStatus =

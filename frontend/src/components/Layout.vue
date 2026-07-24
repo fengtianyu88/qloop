@@ -200,7 +200,7 @@ onMounted(async () => {
               <el-icon><UserFilled /></el-icon>
               <span class="user-name">{{ authStore.user?.full_name || authStore.user?.username || '用户' }}</span>
               <el-tag size="small" type="info" effect="plain">
-                {{ roleLabel(authStore.user?.system_role || 'guest') }}
+                {{ systemRoleLabel(authStore.user?.system_role || 'guest') }}
               </el-tag>
             </div>
             <template #dropdown>

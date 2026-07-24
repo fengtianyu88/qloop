@@ -173,7 +173,6 @@ const roleOptions: { label: string; value: ProjectRole }[] = [
   { label: '项目经理', value: 'project_manager' },
   { label: '开发人员', value: 'developer' },
   { label: '测试人员', value: 'tester' },
-  { label: '外部专家', value: 'external_expert' },
 ]
 const memberSubmitting = ref(false)
 
@@ -381,7 +380,7 @@ onMounted(async () => {
     <!-- 功能1: 项目概览卡片 -->
     <el-row v-if="!loadError" :gutter="16" class="project-overview">
       <el-col :span="4"><div class="overview-card"><div class="num">{{ stats.total }}</div><div class="label">版本总数</div></div></el-col>
-      <el-col :span="4"><div class="overview-card draft"><div class="num">{{ stats.draft }}</div><div class="label">草稿</div></div></el-col>
+      <el-col :span="4"><div class="overview-card draft"><div class="num">{{ stats.draft }}</div><div class="label">待上传代码</div></div></el-col>
       <el-col :span="4"><div class="overview-card review"><div class="num">{{ stats.in_review }}</div><div class="label">评审中</div></div></el-col>
       <el-col :span="4"><div class="overview-card pending"><div class="num">{{ stats.pending_confirm }}</div><div class="label">待释放</div></div></el-col>
       <el-col :span="4"><div class="overview-card released"><div class="num">{{ stats.released }}</div><div class="label">已释放</div></div></el-col>
@@ -575,8 +574,8 @@ onMounted(async () => {
             <el-option v-for="opt in userOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="外部专家" prop="expert_id">
-          <el-select v-model="versionForm.expert_id" placeholder="选择外部专家（可选）" filterable clearable style="width: 100%">
+        <el-form-item label="评审专家" prop="expert_id">
+          <el-select v-model="versionForm.expert_id" placeholder="选择评审专家（可选）" filterable clearable style="width: 100%">
             <el-option v-for="opt in userOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>

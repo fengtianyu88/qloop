@@ -10,7 +10,7 @@ import {
 } from '@/api/users'
 import { downloadUsersTemplate, importUsers } from '@/api/imports'
 import { useAuthStore } from '@/stores/auth'
-import { roleLabel } from '@/utils/status'
+import { systemRoleLabel } from '@/utils/status'
 import type {
   SystemRole,
   User,
@@ -32,7 +32,7 @@ const queryParams = reactive<UserListParams>({
 
 const roleOptions: { label: string; value: SystemRole }[] = [
   { label: '访客', value: 'guest' },
-  { label: '开发人员', value: 'developer' },
+  { label: '工程师', value: 'developer' },
   { label: '管理员', value: 'admin' },
   { label: '超级管理员', value: 'super_admin' },
 ]
@@ -300,7 +300,7 @@ onMounted(() => {
         <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
         <el-table-column label="角色" width="120" align="center">
           <template #default="{ row }">
-            <el-tag>{{ roleLabel(row.system_role) }}</el-tag>
+            <el-tag>{{ systemRoleLabel(row.system_role) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="department" label="部门" width="140" show-overflow-tooltip>

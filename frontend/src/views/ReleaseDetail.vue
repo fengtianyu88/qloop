@@ -42,7 +42,7 @@ const externalLinks = ref<ExternalRecipientLink[]>([])
 
 // 流程步骤
 const steps = [
-  { title: '草稿', status: 'draft' },
+  { title: '待上传代码', status: 'draft' },
   { title: '代码评审', status: 'code_pending_review' },
   { title: '测试报告评审', status: 'test_pending_review' },
   { title: '专家报告评审', status: 'expert_pending_review' },
@@ -400,11 +400,11 @@ async function doUploadCode() {
     ElMessage.error('文件不能超过 200MB')
     return
   }
-  // 文件类型白名单校验
-  const allowExt = ['zip', 'tar', 'gz', 'rar', '7z']
+  // 文件类型白名单校验(代码包仅支持 ZIP)
+  const allowExt = ['zip']
   const ext = codeFile.value.name.split('.').pop()?.toLowerCase()
   if (!ext || !allowExt.includes(ext)) {
-    ElMessage.error('不支持的文件类型')
+    ElMessage.error('不支持的文件类型，代码包仅支持 ZIP 格式')
     return
   }
   codeUploading.value = true
@@ -446,7 +446,7 @@ async function doUploadTest() {
     return
   }
   // 文件类型白名单校验
-  const allowExt = ['pdf', 'doc', 'docx', 'xlsx', 'zip']
+  const allowExt = ['pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'zip']
   const ext = testFile.value.name.split('.').pop()?.toLowerCase()
   if (!ext || !allowExt.includes(ext)) {
     ElMessage.error('不支持的文件类型')
@@ -921,13 +921,6 @@ const failedReviewType = computed<ReviewType | null>(() => {
   return failed?.review_type || null
 })
 
-// 判断指定步骤是否可重新上传(review_failed 状态下,失败的那一步允许重新上传)
-function canReuploadAtStep(stepReviewType: ReviewType): boolean {
-  if (!release.value) return false
-  if (release.value.status !== 'review_failed') return false
-  return failedReviewType.value === stepReviewType
-}
-
 // 判断指定步骤的已上传交付物是否可删除(达到成功释放之前,上传人和管理员都可删除)
 function canDeleteArtifactByType(
   uploaderId: string | null | undefined,
@@ -1382,7 +1375,7 @@ onMounted(async () => {
                 <div><span class="label">释放序号:</span>{{ release.release_number }}</div>
                 <div>
                   <span class="label">状态:</span>
-                  <el-tag :type="statusTagType(release.status)" size="small">{{ statusLabel(release.status) }}</el-tag>
+                  <el-tag :type="statusTagType(release.status)" size="small">{{ statusLabel(release.status, release) }}</el-tag>
                 </div>
                 <div><span class="label">创建时间:</span>{{ formatTime(release.created_at) }}</div>
                 <div v-if="release.change_notes"><span class="label">变更点:</span>{{ release.change_notes }}</div>
@@ -1438,7 +1431,7 @@ onMounted(async () => {
                 </div>
               </div>
               <div class="step-actions">
-                <template v-if="release.status === 'draft' || canReuploadAtStep('code_review')">
+                <template v-if="!isReleased">
                   <el-input
                     v-model="codeChangeNotes"
                     type="textarea"
@@ -1451,14 +1444,15 @@ onMounted(async () => {
                     :limit="1"
                     :on-change="handleCodeFileChange"
                     :on-exceed="() => ElMessage.warning('只能上传一个文件')"
-                    accept=".zip,.tar,.gz,.rar,.7z"
+                    accept=".zip"
                     style="display:inline-block"
                   >
                     <el-button type="primary" plain size="small"><el-icon><Upload /></el-icon>选择文件</el-button>
                   </el-upload>
                   <el-button type="primary" size="small" :loading="codeUploading" @click="doUploadCode">
-                    {{ canReuploadAtStep('code_review') ? '重新上传代码包' : '上传代码包' }}
+                    {{ release.code_package_path ? '重新上传代码包' : '上传代码包' }}
                   </el-button>
+                  <span style="margin-left:8px;color:#909399;font-size:12px">仅支持 ZIP 格式</span>
                   <!-- 优化4: 代码包模板下载 -->
                   <el-button text size="small" @click="downloadTemplate('code')">
                     <el-icon><Download /></el-icon>下载模板
@@ -1544,19 +1538,19 @@ onMounted(async () => {
                 </div>
               </div>
               <div class="step-actions">
-                <template v-if="release.status === 'test_pending_review' || canReuploadAtStep('test_report_review')">
+                <template v-if="!isReleased">
                   <el-upload
                     :auto-upload="false"
                     :limit="1"
                     :on-change="handleTestFileChange"
                     :on-exceed="() => ElMessage.warning('只能上传一个文件')"
-                    accept=".pdf,.doc,.docx,.xlsx,.zip"
+                    accept=".pdf,.doc,.docx,.xlsx,.xls,.csv,.zip"
                     style="display:inline-block"
                   >
                     <el-button type="primary" plain size="small"><el-icon><Upload /></el-icon>选择文件</el-button>
                   </el-upload>
                   <el-button type="primary" size="small" :loading="testUploading" @click="doUploadTest">
-                    {{ canReuploadAtStep('test_report_review') ? '重新上传测试报告' : '上传测试报告' }}
+                    {{ release.test_report_path ? '重新上传测试报告' : '上传测试报告' }}
                   </el-button>
                   <!-- 优化4: 测试报告模板下载 -->
                   <el-button text size="small" @click="downloadTemplate('test')">
@@ -1643,7 +1637,7 @@ onMounted(async () => {
                 </div>
               </div>
               <div class="step-actions">
-                <template v-if="release.status === 'expert_pending_review' || canReuploadAtStep('expert_report_review')">
+                <template v-if="!isReleased">
                   <el-upload
                     :auto-upload="false"
                     :limit="1"
@@ -1655,7 +1649,7 @@ onMounted(async () => {
                     <el-button type="primary" plain size="small"><el-icon><Upload /></el-icon>选择文件</el-button>
                   </el-upload>
                   <el-button type="primary" size="small" :loading="reviewUploading" @click="doUploadReviewReport">
-                    {{ canReuploadAtStep('expert_report_review') ? '重新上传评审报告' : '上传评审报告' }}
+                    {{ release.review_report_path ? '重新上传评审报告' : '上传评审报告' }}
                   </el-button>
                   <!-- 优化4: 专家评审报告模板下载 -->
                   <el-button text size="small" @click="downloadTemplate('expert')">

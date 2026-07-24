@@ -128,7 +128,7 @@ onMounted(() => {
               {{ authStore.user?.username || '—' }}
             </el-descriptions-item>
             <el-descriptions-item label="系统角色">
-              <el-tag>{{ roleLabel(authStore.user?.system_role || 'guest') }}</el-tag>
+              <el-tag>{{ systemRoleLabel(authStore.user?.system_role || 'guest') }}</el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="账号状态">
               <el-tag :type="authStore.user?.is_active ? 'success' : 'danger'">

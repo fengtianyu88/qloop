@@ -9,10 +9,36 @@ import type {
   SystemRole,
 } from '@/types'
 
-/** 释放状态 -> 中文标签 */
-export function statusLabel(status: ReleaseStatus): string {
+/** 释放状态上下文(用于精细化判断"待上传"还是"待评审") */
+export interface StatusContext {
+  code_package_path?: string | null
+  test_report_path?: string | null
+  review_report_path?: string | null
+}
+
+/** 释放状态 -> 中文标签
+ *
+ * 当传入 ``ctx`` 时,会根据文件是否已上传做精细化显示:
+ * - 代码阶段无代码包 -> "待上传代码"; 有代码包 -> "代码待评审"
+ * - 测试阶段无测试报告 -> "待上传测试报告"; 有测试报告 -> "测试报告待评审"
+ * - 评审阶段无评审报告 -> "待上传评审报告"; 有评审报告 -> "专家报告待评审"
+ *
+ * 不传 ``ctx`` 时使用默认映射(向后兼容)。
+ */
+export function statusLabel(status: ReleaseStatus, ctx?: StatusContext): string {
+  if (ctx) {
+    switch (status) {
+      case 'draft':
+      case 'code_pending_review':
+        return ctx.code_package_path ? '代码待评审' : '待上传代码'
+      case 'test_pending_review':
+        return ctx.test_report_path ? '测试报告待评审' : '待上传测试报告'
+      case 'expert_pending_review':
+        return ctx.review_report_path ? '专家报告待评审' : '待上传评审报告'
+    }
+  }
   const map: Record<ReleaseStatus, string> = {
-    draft: '草稿',
+    draft: '待上传代码',
     code_pending_review: '代码待评审',
     test_pending_review: '测试报告待评审',
     expert_pending_review: '专家报告待评审',
@@ -71,16 +97,23 @@ export function reviewTypeLabel(type: ReviewType): string {
   return map[type] ?? type
 }
 
-/** 角色（系统角色 / 项目角色） -> 中文标签 */
-export function roleLabel(role: SystemRole | ProjectRole): string {
-  const map: Record<string, string> = {
+/** 系统角色 -> 中文标签 */
+export function systemRoleLabel(role: SystemRole): string {
+  const map: Record<SystemRole, string> = {
     guest: '访客',
-    developer: '开发人员',
+    developer: '工程师',
     admin: '管理员',
     super_admin: '超级管理员',
+  }
+  return map[role] ?? role
+}
+
+/** 项目角色 -> 中文标签 */
+export function roleLabel(role: ProjectRole): string {
+  const map: Record<ProjectRole, string> = {
     project_manager: '项目经理',
+    developer: '开发人员',
     tester: '测试人员',
-    external_expert: '外部专家',
   }
   return map[role] ?? role
 }
