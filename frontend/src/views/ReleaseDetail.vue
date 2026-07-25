@@ -45,7 +45,6 @@ const steps = [
   { title: '待上传代码', status: 'draft' },
   { title: '代码评审', status: 'code_pending_review' },
   { title: '测试报告评审', status: 'test_pending_review' },
-  { title: '专家报告评审', status: 'expert_pending_review' },
   { title: '待 PM 确认', status: 'pending_confirm' },
   { title: '已释放', status: 'released' },
 ]
@@ -66,7 +65,6 @@ const isReleasedForced = computed(() => release.value?.status === 'released_forc
 const reviewTypeOptions: { label: string; value: ReviewType }[] = [
   { label: '代码评审', value: 'code_review' },
   { label: '测试报告评审', value: 'test_report_review' },
-  { label: '专家报告评审', value: 'expert_report_review' },
 ]
 const triggerReviewType = ref<ReviewType>('code_review')
 const triggering = ref(false)
@@ -358,7 +356,6 @@ function syncTriggerType() {
   const status = release.value?.status
   if (status === 'code_pending_review') triggerReviewType.value = 'code_review'
   else if (status === 'test_pending_review') triggerReviewType.value = 'test_report_review'
-  else if (status === 'expert_pending_review') triggerReviewType.value = 'expert_report_review'
   // 评审失败状态下,默认触发类型为失败的评审类型(便于用户重新触发)
   else if (status === 'review_failed' && failedReviewType.value) {
     triggerReviewType.value = failedReviewType.value
@@ -509,7 +506,7 @@ async function doUploadReviewReport() {
         }
       }
     })
-    ElMessage.success('评审报告上传成功，已进入专家报告评审')
+    ElMessage.success('评审报告上传成功，已进入待确认状态')
     reviewFile.value = null
     await loadReviews()
     syncTriggerType()
@@ -938,13 +935,12 @@ function canDeleteArtifactByType(
 const canSkipReview = computed(() => {
   if (!release.value || !authStore.user) return false
   const status = release.value.status
-  const reviewStages = ['code_pending_review', 'test_pending_review', 'expert_pending_review']
+  const reviewStages = ['code_pending_review', 'test_pending_review']
   if (!reviewStages.includes(status)) return false
   if (authStore.isAdmin) return true
   const userId = authStore.user.id
   if (status === 'code_pending_review') return release.value.code_package_uploaded_by === userId
   if (status === 'test_pending_review') return release.value.test_report_uploaded_by === userId
-  if (status === 'expert_pending_review') return release.value.review_report_uploaded_by === userId
   return false
 })
 
@@ -959,7 +955,6 @@ const canForceAdvance = computed(() => {
   const allowedStages = [
     'code_pending_review',
     'test_pending_review',
-    'expert_pending_review',
     'pending_confirm',
     'review_failed',  // 功能7:评审失败后 PM/管理员可特批放行到下一阶段
   ]
@@ -1057,7 +1052,7 @@ const step2Status = computed<StepStatus>(() => {
   const status = release.value.status
   if (status === 'draft') return 'current'
   if (status === 'code_pending_review') return 'in_progress'
-  if (['test_pending_review', 'expert_pending_review', 'pending_confirm', 'released', 'released_forced'].includes(status)) return 'completed'
+  if (['test_pending_review', 'pending_confirm', 'released', 'released_forced'].includes(status)) return 'completed'
   if (status === 'review_failed') {
     const review = getReviewByType('code_review')
     if (review?.result === 'failed' || review?.result === 'error') return 'failed'
@@ -1072,7 +1067,7 @@ const step3Status = computed<StepStatus>(() => {
   const status = release.value.status
   if (['draft', 'code_pending_review'].includes(status)) return 'not_started'
   if (status === 'test_pending_review') return 'in_progress'
-  if (['expert_pending_review', 'pending_confirm', 'released', 'released_forced'].includes(status)) return 'completed'
+  if (['pending_confirm', 'released', 'released_forced'].includes(status)) return 'completed'
   if (status === 'review_failed') {
     const review = getReviewByType('test_report_review')
     if (review?.result === 'failed' || review?.result === 'error') return 'failed'
@@ -1088,12 +1083,8 @@ const step4Status = computed<StepStatus>(() => {
   if (!release.value) return 'not_started'
   const status = release.value.status
   if (['draft', 'code_pending_review', 'test_pending_review'].includes(status)) return 'not_started'
-  if (status === 'expert_pending_review') return 'in_progress'
   if (['pending_confirm', 'released', 'released_forced'].includes(status)) return 'completed'
   if (status === 'review_failed') {
-    const review = getReviewByType('expert_report_review')
-    if (review?.result === 'failed' || review?.result === 'error') return 'failed'
-    if (review?.result === 'passed') return 'completed'
     if (release.value.review_report_path) return 'completed'
     return 'not_started'
   }
@@ -1103,7 +1094,7 @@ const step4Status = computed<StepStatus>(() => {
 const step5Status = computed<StepStatus>(() => {
   if (!release.value) return 'not_started'
   const status = release.value.status
-  if (['draft', 'code_pending_review', 'test_pending_review', 'expert_pending_review'].includes(status)) return 'not_started'
+  if (['draft', 'code_pending_review', 'test_pending_review'].includes(status)) return 'not_started'
   if (status === 'pending_confirm') return 'current'
   if (status === 'released' || status === 'released_forced') return 'completed'
   return 'not_started'
@@ -1117,7 +1108,6 @@ const nextStepHint = computed<{ actor: string; action: string; type: 'info' | 'w
     draft: { actor: '开发人员', action: '上传代码包', type: 'info' },
     code_pending_review: { actor: '项目经理', action: '触发代码评审', type: 'info' },
     test_pending_review: { actor: '测试人员', action: '上传测试报告', type: 'info' },
-    expert_pending_review: { actor: '专家', action: '上传专家评审报告', type: 'info' },
     pending_confirm: { actor: '项目经理', action: '确认释放', type: 'warning' },
     released: { actor: '-', action: '版本已释放', type: 'success' },
     review_failed: { actor: '项目经理', action: '评审未通过，可特批放行或等待重新上传', type: 'warning' },
@@ -1125,8 +1115,8 @@ const nextStepHint = computed<{ actor: string; action: string; type: 'info' | 'w
   return hintMap[status] || { actor: '', action: '', type: 'info' }
 })
 
-// 优化4: 下载模板 - 生成并下载对应类型(代码包/测试报告/专家评审报告)的模板文件
-function downloadTemplate(type: 'code' | 'test' | 'expert') {
+// 优化4: 下载模板 - 生成并下载对应类型(代码包/测试报告)的模板文件
+function downloadTemplate(type: 'code' | 'test') {
   const r = release.value
   if (!r) return
   // 公共变量替换:项目名、版本号、用户名、日期
@@ -1193,32 +1183,6 @@ class BMSCore:
 
 ## 结论
 <!-- 通过/不通过 -->
-`
-  } else if (type === 'expert') {
-    ext = 'md'
-    content = `# 专家评审报告
-## 评审信息
-- 项目: ${projectNameStr}
-- 版本: ${versionStr}
-- 评审专家: ${userStr}
-- 日期: ${dateStr}
-
-## 评审范围
-<!-- 列出本次评审的范围 -->
-
-## 评审维度
-| 维度 | 评分(0-100) | 说明 |
-|------|------------|------|
-| 代码质量 | | |
-| 安全性 | | |
-| 合规性 | | |
-| 性能 | | |
-
-## 风险点
-<!-- 列出发现的风险 -->
-
-## 评审结论
-<!-- 通过/不通过/有条件通过 -->
 `
   }
 
@@ -1592,11 +1556,11 @@ onMounted(async () => {
 
           <div class="step-connector">↓</div>
 
-          <!-- 步骤 4:评审报告上传 + LLM 评审 -->
+          <!-- 步骤 4:评审报告上传 -->
           <div :class="['step-box', step4Status]">
             <div class="step-header">
               <span class="step-number">4</span>
-              <span>评审报告上传 + LLM 评审</span>
+              <span>评审报告上传</span>
             </div>
             <div class="step-content">
               <div class="step-info">
@@ -1619,22 +1583,6 @@ onMounted(async () => {
                     <el-icon><Delete /></el-icon>删除
                   </el-button>
                 </div>
-                <div v-if="getReviewByType('expert_report_review')">
-                  <span class="label">评审结果:</span>
-                  <el-tag :type="reviewResultTagType(getReviewByType('expert_report_review')!.result)" size="small">
-                    {{ reviewResultLabel(getReviewByType('expert_report_review')!.result) }}
-                  </el-tag>
-                  <el-tag v-if="getReviewByType('expert_report_review')!.force_passed" type="warning" size="small" effect="light" style="margin-left:6px">
-                    <el-icon style="margin-right:4px"><Promotion /></el-icon>特批放行
-                  </el-tag>
-                  <span v-if="getReviewByType('expert_report_review')!.force_passed && getReviewByType('expert_report_review')!.force_passed_by_name" style="margin-left:8px;color:#e6a23c;font-size:12px">
-                    放行人:{{ getReviewByType('expert_report_review')!.force_passed_by_name }}
-                    · {{ formatTime(getReviewByType('expert_report_review')!.force_passed_at) }}
-                  </span>
-                  <span v-if="getReviewByType('expert_report_review')!.total_score !== null" style="margin-left:8px">
-                    分数:<b>{{ getReviewByType('expert_report_review')!.total_score }}</b>
-                  </span>
-                </div>
               </div>
               <div class="step-actions">
                 <template v-if="!isReleased">
@@ -1651,10 +1599,6 @@ onMounted(async () => {
                   <el-button type="primary" size="small" :loading="reviewUploading" @click="doUploadReviewReport">
                     {{ release.review_report_path ? '重新上传评审报告' : '上传评审报告' }}
                   </el-button>
-                  <!-- 优化4: 专家评审报告模板下载 -->
-                  <el-button text size="small" @click="downloadTemplate('expert')">
-                    <el-icon><Download /></el-icon>下载模板
-                  </el-button>
                   <!-- 评审报告上传进度条 -->
                   <el-progress
                     v-if="reviewUploadProgress > 0 && reviewUploadProgress < 100"
@@ -1664,28 +1608,7 @@ onMounted(async () => {
                     style="margin-top: 8px; width: 100%"
                   />
                 </template>
-                <template v-if="release.status === 'expert_pending_review'">
-                  <el-button type="primary" size="small" :loading="triggering" :disabled="reviewInProgress" @click="handleTriggerReview">
-                    <el-icon><Refresh /></el-icon>触发评审
-                  </el-button>
-                  <el-tooltip content="暂不评审，稍后可继续" placement="top">
-                    <el-button v-if="canSkipReview" type="warning" plain size="small" @click="handleSkipReview">
-                      <el-icon><Clock /></el-icon>稍后评审
-                    </el-button>
-                  </el-tooltip>
-                  <el-tooltip content="跳过当前阶段评审，直接进入下一阶段" placement="top">
-                    <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
-                      <el-icon><Promotion /></el-icon>特批放行
-                    </el-button>
-                  </el-tooltip>
-                </template>
               </div>
-            </div>
-            <div v-if="getReviewByType('expert_report_review')" class="review-result-box">
-              <strong>结论:</strong> {{ getReviewByType('expert_report_review')!.conclusion || '—' }}
-              <span v-if="getReviewByType('expert_report_review')!.suggestions" style="margin-left:12px">
-                <strong>建议:</strong>{{ getReviewByType('expert_report_review')!.suggestions }}
-              </span>
             </div>
           </div>
 

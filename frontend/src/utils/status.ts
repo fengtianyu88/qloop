@@ -21,7 +21,6 @@ export interface StatusContext {
  * 当传入 ``ctx`` 时,会根据文件是否已上传做精细化显示:
  * - 代码阶段无代码包 -> "待上传代码"; 有代码包 -> "代码待评审"
  * - 测试阶段无测试报告 -> "待上传测试报告"; 有测试报告 -> "测试报告待评审"
- * - 评审阶段无评审报告 -> "待上传评审报告"; 有评审报告 -> "专家报告待评审"
  *
  * 不传 ``ctx`` 时使用默认映射(向后兼容)。
  */
@@ -33,15 +32,12 @@ export function statusLabel(status: ReleaseStatus, ctx?: StatusContext): string 
         return ctx.code_package_path ? '代码待评审' : '待上传代码'
       case 'test_pending_review':
         return ctx.test_report_path ? '测试报告待评审' : '待上传测试报告'
-      case 'expert_pending_review':
-        return ctx.review_report_path ? '专家报告待评审' : '待上传评审报告'
     }
   }
   const map: Record<ReleaseStatus, string> = {
     draft: '待上传代码',
     code_pending_review: '代码待评审',
     test_pending_review: '测试报告待评审',
-    expert_pending_review: '专家报告待评审',
     pending_confirm: '待 PM 确认',
     released: '已释放',
     released_forced: '已特批释放',
@@ -56,7 +52,6 @@ export function statusTagType(status: ReleaseStatus): string {
     draft: 'info',
     code_pending_review: 'warning',
     test_pending_review: 'warning',
-    expert_pending_review: 'warning',
     pending_confirm: 'primary',
     released: 'success',
     released_forced: 'warning',
@@ -92,7 +87,6 @@ export function reviewTypeLabel(type: ReviewType): string {
   const map: Record<ReviewType, string> = {
     code_review: '代码评审',
     test_report_review: '测试报告评审',
-    expert_report_review: '专家报告评审',
   }
   return map[type] ?? type
 }

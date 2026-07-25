@@ -338,7 +338,6 @@ const ruleLoading = ref(false)
 const reviewTypeOptions: { label: string; value: ReviewType }[] = [
   { label: '代码评审', value: 'code_review' },
   { label: '测试报告评审', value: 'test_report_review' },
-  { label: '专家报告评审', value: 'expert_report_review' },
 ]
 
 const ruleDialogVisible = ref(false)

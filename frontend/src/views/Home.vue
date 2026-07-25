@@ -62,7 +62,6 @@ const statusOptions: { label: string; value: ReleaseStatus }[] = [
   { label: '待上传代码', value: 'draft' },
   { label: '代码待评审', value: 'code_pending_review' },
   { label: '测试报告待评审', value: 'test_pending_review' },
-  { label: '专家报告待评审', value: 'expert_pending_review' },
   { label: '待 PM 确认', value: 'pending_confirm' },
   { label: '已释放', value: 'released' },
   { label: '评审未通过', value: 'review_failed' },
@@ -246,8 +245,6 @@ function releaseCellValue(row: ReleaseListItem, prop: string): string {
       return row.developer_name || '—'
     case 'tester_name':
       return row.tester_name || '—'
-    case 'expert_name':
-      return row.expert_name || '—'
     case 'change_notes':
       return row.change_notes || '—'
     case 'status':
@@ -267,7 +264,6 @@ const releaseColFilters = reactive<Record<string, ColFilter>>({
   pm_name: { input: '', selected: [] },
   developer_name: { input: '', selected: [] },
   tester_name: { input: '', selected: [] },
-  expert_name: { input: '', selected: [] },
   change_notes: { input: '', selected: [] },
   status: { input: '', selected: [] },
   created_at: { input: '', selected: [] },
@@ -612,33 +608,6 @@ onMounted(() => {
               </div>
             </template>
             <template #default="{ row }">{{ row.tester_name || '—' }}</template>
-          </el-table-column>
-
-          <!-- 审核专家（测试人员右边新增） -->
-          <el-table-column prop="expert_name" label="审核专家" width="120" show-overflow-tooltip sortable>
-            <template #header>
-              <div class="col-with-filter">
-                <span>审核专家</span>
-                <el-popover trigger="click" placement="bottom" :width="220">
-                  <template #reference>
-                    <el-button class="filter-icon-btn" link @click.stop>
-                      <el-icon class="filter-icon" :class="{ active: releaseColFilters.expert_name.input || releaseColFilters.expert_name.selected.length }"><Filter /></el-icon>
-                    </el-button>
-                  </template>
-                  <div class="filter-pop">
-                    <el-input v-model="releaseColFilters.expert_name.input" placeholder="搜索（自由输入）" size="small" clearable />
-                    <el-divider class="filter-divider" />
-                    <div class="filter-options">
-                      <el-checkbox-group v-model="releaseColFilters.expert_name.selected">
-                        <el-checkbox v-for="opt in getReleaseOptions('expert_name')" :key="opt" :label="opt" :value="opt">{{ opt }}</el-checkbox>
-                      </el-checkbox-group>
-                    </div>
-                    <div class="filter-actions"><el-button size="small" @click="clearReleaseFilter('expert_name')">清空</el-button></div>
-                  </div>
-                </el-popover>
-              </div>
-            </template>
-            <template #default="{ row }">{{ row.expert_name || '—' }}</template>
           </el-table-column>
 
           <!-- 变更点 -->

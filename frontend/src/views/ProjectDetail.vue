@@ -307,7 +307,6 @@ const versionForm = reactive<VersionCreate>({
   description: '',
   developer_id: null,
   tester_id: null,
-  expert_id: null,
 })
 const versionRules: FormRules<VersionCreate> = {
   version_number: [{ required: true, message: '请输入版本号', trigger: 'blur' }],
@@ -319,7 +318,6 @@ function openVersionDialog() {
   versionForm.description = ''
   versionForm.developer_id = null
   versionForm.tester_id = null
-  versionForm.expert_id = null
   versionDialogVisible.value = true
 }
 
@@ -334,7 +332,6 @@ async function handleCreateVersion() {
         description: versionForm.description || undefined,
         developer_id: versionForm.developer_id || undefined,
         tester_id: versionForm.tester_id || undefined,
-        expert_id: versionForm.expert_id || undefined,
       })
       ElMessage.success('版本创建成功（已自动生成草稿释放）')
       await loadVersions()  // 重新加载以获取 latest_release_status
@@ -471,9 +468,6 @@ onMounted(async () => {
         <el-table-column label="测试人员" width="150">
           <template #default="{ row }">{{ userName(row.tester_id) }}</template>
         </el-table-column>
-        <el-table-column label="专家" width="150">
-          <template #default="{ row }">{{ userName(row.expert_id) }}</template>
-        </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="170">
           <template #default="{ row }">{{ row.created_at?.replace('T', ' ').slice(0, 19) }}</template>
         </el-table-column>
@@ -571,11 +565,6 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item label="测试人员" prop="tester_id">
           <el-select v-model="versionForm.tester_id" placeholder="选择测试人员（可选）" filterable clearable style="width: 100%">
-            <el-option v-for="opt in userOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="评审专家" prop="expert_id">
-          <el-select v-model="versionForm.expert_id" placeholder="选择评审专家（可选）" filterable clearable style="width: 100%">
             <el-option v-for="opt in userOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>

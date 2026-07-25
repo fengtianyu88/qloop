@@ -17,7 +17,6 @@ export interface MyTaskItem {
   todo_type: string | null
   developer_name: string | null
   tester_name: string | null
-  expert_name: string | null
   pm_name: string | null
 }
 

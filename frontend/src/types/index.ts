@@ -18,14 +18,13 @@ export type ReleaseStatus =
   | 'draft'
   | 'code_pending_review'
   | 'test_pending_review'
-  | 'expert_pending_review'
   | 'pending_confirm'
   | 'released'
   | 'released_forced'
   | 'review_failed'
 
 /** LLM 评审类型 */
-export type ReviewType = 'code_review' | 'test_report_review' | 'expert_report_review'
+export type ReviewType = 'code_review' | 'test_report_review'
 
 /** LLM 评审结果 */
 export type ReviewResult = 'passed' | 'failed' | 'pending' | 'error'
@@ -176,7 +175,6 @@ export interface Version {
   description: string | null
   developer_id: string | null
   tester_id: string | null
-  expert_id: string | null
   created_at: string
   updated_at: string
 }
@@ -187,7 +185,6 @@ export interface VersionCreate {
   description?: string
   developer_id?: string | null
   tester_id?: string | null
-  expert_id?: string | null
 }
 
 /** 外部接收方下载链接(含 access_token,功能2) */
@@ -254,8 +251,6 @@ export interface ReleaseListItem extends Release {
   developer_name: string | null
   tester_id: string | null
   tester_name: string | null
-  expert_id: string | null
-  expert_name: string | null
 }
 
 /** LLM 评审记录 */
