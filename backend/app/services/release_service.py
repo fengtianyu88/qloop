@@ -18,6 +18,7 @@ from app.storage.minio_client import (
     minio_delete_object,
     minio_generate_presigned_url,
     minio_upload_file,
+    minio_download_file,
 )
 from app.models.notification import NotificationType
 from app.services.notification_service import create_notification
@@ -26,11 +27,24 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Git 推送(功能3.6:释放后以项目经理 Git 账号推送到项目 Git 目录)
+# ---------------------------------------------------------------------------
+# 实现方式:
+# 1. 从 MinIO 下载已释放的交付物(code_package / test_report / review_report)
+# 2. 用 dulwich(GitHub 上的纯 Python Git 实现)或 subprocess 调用系统 git
+#    将交付物推送到项目配置的 Git 仓库的指定分支。
+# 3. 使用项目经理用户的 git_username + git_token 作为 HTTPS 认证凭据。
+#
+# 为了避免引入额外依赖,这里使用 subprocess 调用系统 git。
+# 生产环境应确保 git 可执行文件在 PATH 中,且服务器能访问目标 Git 仓库。
+
+
+# ---------------------------------------------------------------------------
 # 文件类型白名单 + 文件名 sanitize(P1-2 / P1-3)
 # ---------------------------------------------------------------------------
 # 各业务文件类型允许的扩展名(小写,带点)
 ALLOWED_EXTENSIONS: dict[str, set[str]] = {
-    'code_package': {'.zip', '.tar', '.gz', '.tgz', '.rar', '.7z'},
+    'code_package': {'.zip'},
     'test_report': {'.pdf', '.doc', '.docx', '.xlsx', '.xls', '.csv', '.zip'},
     'review_report': {'.pdf', '.doc', '.docx', '.zip'},
 }
@@ -144,7 +158,7 @@ async def _get_version_project_for_notify(
 ) -> Optional[tuple]:
     """查询版本的版本号、各角色 user_id 和 PM user_id(用于通知)。
 
-    返回 (version_number, developer_id, tester_id, expert_id, pm_user_id),
+    返回 (version_number, developer_id, tester_id, pm_user_id),
     若版本不存在返回 None。commit 之后 release.version 关系可能已过期,
     因此单独查询避免 async 懒加载错误。
     """
@@ -161,7 +175,6 @@ async def _get_version_project_for_notify(
         ver.version_number,
         ver.developer_id,
         ver.tester_id,
-        ver.expert_id,
         pm_user_id,
     )
 
@@ -224,7 +237,7 @@ async def upload_code_package(
     try:
         info = await _get_version_project_for_notify(db, release.version_id)
         if info is not None:
-            version_no, _dev, _tester, _expert, pm_uid = info
+            version_no, _dev, _tester, pm_uid = info
             if pm_uid is not None:
                 await create_notification(
                     db, pm_uid, NotificationType.YOUR_TURN,
@@ -293,7 +306,7 @@ async def upload_test_report(
     try:
         info = await _get_version_project_for_notify(db, release.version_id)
         if info is not None:
-            version_no, _dev, _tester, _expert, pm_uid = info
+            version_no, _dev, _tester, pm_uid = info
             if pm_uid is not None:
                 await create_notification(
                     db, pm_uid, NotificationType.YOUR_TURN,
@@ -316,7 +329,7 @@ async def upload_review_report(
     content_type: str,
     user_id: Optional[uuid.UUID] = None,
 ) -> Optional[Release]:
-    """Upload a review/expert report to MinIO and update the release status.
+    """Upload a review report to MinIO and update the release status.
 
     Args:
         db: The async database session.
@@ -350,7 +363,7 @@ async def upload_review_report(
     release.review_report_path = object_name
     # 计算并保存 SHA256(功能3.2)
     release.review_report_sha256 = calculate_sha256(file_data)
-    release.status = ReleaseStatus.EXPERT_PENDING_REVIEW
+    release.status = ReleaseStatus.PENDING_CONFIRM
     if user_id is not None:
         release.review_report_uploaded_by = user_id
         release.review_report_uploaded_at = datetime.now(timezone.utc)
@@ -358,16 +371,16 @@ async def upload_review_report(
     await db.commit()
     await db.refresh(release)
 
-    # 通知 PM:专家评审报告已上传,请触发专家报告评审
+    # 通知 PM:评审报告已上传,请确认释放
     try:
         info = await _get_version_project_for_notify(db, release.version_id)
         if info is not None:
-            version_no, _dev, _tester, _expert, pm_uid = info
+            version_no, _dev, _tester, pm_uid = info
             if pm_uid is not None:
                 await create_notification(
                     db, pm_uid, NotificationType.YOUR_TURN,
-                    "专家评审报告已上传",
-                    f"{version_no} 专家评审报告已上传，请触发专家报告评审",
+                    "评审报告已上传",
+                    f"{version_no} 评审报告已上传，请确认释放",
                     f"/releases/{release.id}",
                 )
     except Exception:
@@ -471,13 +484,13 @@ async def confirm_release(
     await db.commit()
     await db.refresh(release)
 
-    # 通知所有相关人员(developer/tester/expert/PM):版本已释放
+    # 通知所有相关人员(developer/tester/PM):版本已释放
     try:
         info = await _get_version_project_for_notify(db, release.version_id)
         if info is not None:
-            version_no, dev_id, tester_id, expert_id, pm_uid = info
+            version_no, dev_id, tester_id, pm_uid = info
             link_url = f"/releases/{release.id}"
-            for uid in (dev_id, tester_id, expert_id, pm_uid):
+            for uid in (dev_id, tester_id, pm_uid):
                 if uid is None:
                     continue
                 await create_notification(
@@ -523,8 +536,7 @@ async def advance_release_after_review(
 
     Transitions:
         - CODE_PENDING_REVIEW -> TEST_PENDING_REVIEW
-        - TEST_PENDING_REVIEW -> EXPERT_PENDING_REVIEW
-        - EXPERT_PENDING_REVIEW -> PENDING_CONFIRM
+        - TEST_PENDING_REVIEW -> PENDING_CONFIRM
 
     Args:
         db: The async database session.
@@ -542,8 +554,7 @@ async def advance_release_after_review(
 
     status_transitions = {
         ReleaseStatus.CODE_PENDING_REVIEW: ReleaseStatus.TEST_PENDING_REVIEW,
-        ReleaseStatus.TEST_PENDING_REVIEW: ReleaseStatus.EXPERT_PENDING_REVIEW,
-        ReleaseStatus.EXPERT_PENDING_REVIEW: ReleaseStatus.PENDING_CONFIRM,
+        ReleaseStatus.TEST_PENDING_REVIEW: ReleaseStatus.PENDING_CONFIRM,
     }
 
     next_status = status_transitions.get(release.status)
@@ -629,8 +640,7 @@ async def skip_review(
 
     Transitions:
         - CODE_PENDING_REVIEW -> TEST_PENDING_REVIEW
-        - TEST_PENDING_REVIEW -> EXPERT_PENDING_REVIEW
-        - EXPERT_PENDING_REVIEW -> PENDING_CONFIRM
+        - TEST_PENDING_REVIEW -> PENDING_CONFIRM
 
     Returns:
         The updated Release object, or None if not found.
@@ -643,8 +653,7 @@ async def skip_review(
 
     status_transitions = {
         ReleaseStatus.CODE_PENDING_REVIEW: ReleaseStatus.TEST_PENDING_REVIEW,
-        ReleaseStatus.TEST_PENDING_REVIEW: ReleaseStatus.EXPERT_PENDING_REVIEW,
-        ReleaseStatus.EXPERT_PENDING_REVIEW: ReleaseStatus.PENDING_CONFIRM,
+        ReleaseStatus.TEST_PENDING_REVIEW: ReleaseStatus.PENDING_CONFIRM,
     }
 
     next_status = status_transitions.get(release.status)
@@ -664,7 +673,7 @@ async def force_advance(
 ) -> Optional[Release]:
     """Force-advance a release to the next stage, bypassing reviews.
 
-    - In review stages (code/test/expert pending_review): advance to next stage.
+    - In review stages (code/test pending_review): advance to next stage.
     - In pending_confirm: force-release (set status to RELEASED, generate download link).
     - In review_failed: special-approval advance based on the failed review stage
       (功能7 - PM/admin can override LLM review failures).
@@ -716,8 +725,7 @@ async def force_advance(
             # 根据失败的 review_type 决定推进目标
             failed_type_to_next = {
                 ReviewType.CODE_REVIEW: ReleaseStatus.TEST_PENDING_REVIEW,
-                ReviewType.TEST_REPORT_REVIEW: ReleaseStatus.EXPERT_PENDING_REVIEW,
-                ReviewType.EXPERT_REPORT_REVIEW: ReleaseStatus.PENDING_CONFIRM,
+                ReviewType.TEST_REPORT_REVIEW: ReleaseStatus.PENDING_CONFIRM,
             }
             next_status = failed_type_to_next.get(
                 failed_review.review_type, ReleaseStatus.PENDING_CONFIRM
@@ -740,10 +748,9 @@ async def force_advance(
         try:
             info = await _get_version_project_for_notify(db, release.version_id)
             if info is not None:
-                version_no, dev_id, tester_id, expert_id, pm_uid = info
+                version_no, dev_id, tester_id, pm_uid = info
                 next_role_user = {
                     ReleaseStatus.TEST_PENDING_REVIEW: tester_id,
-                    ReleaseStatus.EXPERT_PENDING_REVIEW: expert_id,
                     ReleaseStatus.PENDING_CONFIRM: pm_uid,
                 }.get(next_status)
                 if next_role_user is not None:
@@ -805,8 +812,7 @@ async def force_advance(
     # Review stages: advance to next stage
     status_transitions = {
         ReleaseStatus.CODE_PENDING_REVIEW: ReleaseStatus.TEST_PENDING_REVIEW,
-        ReleaseStatus.TEST_PENDING_REVIEW: ReleaseStatus.EXPERT_PENDING_REVIEW,
-        ReleaseStatus.EXPERT_PENDING_REVIEW: ReleaseStatus.PENDING_CONFIRM,
+        ReleaseStatus.TEST_PENDING_REVIEW: ReleaseStatus.PENDING_CONFIRM,
     }
 
     next_status = status_transitions.get(release.status)
@@ -828,7 +834,6 @@ async def force_advance(
     status_to_review_type = {
         ReleaseStatus.CODE_PENDING_REVIEW: "code_review",
         ReleaseStatus.TEST_PENDING_REVIEW: "test_report_review",
-        ReleaseStatus.EXPERT_PENDING_REVIEW: "expert_report_review",
     }
     current_review_type = status_to_review_type.get(original_status)
     if current_review_type is not None:
@@ -876,10 +881,9 @@ async def force_advance(
     try:
         info = await _get_version_project_for_notify(db, release.version_id)
         if info is not None:
-            version_no, dev_id, tester_id, expert_id, pm_uid = info
+            version_no, dev_id, tester_id, pm_uid = info
             next_role_user = {
                 ReleaseStatus.TEST_PENDING_REVIEW: tester_id,
-                ReleaseStatus.EXPERT_PENDING_REVIEW: expert_id,
                 ReleaseStatus.PENDING_CONFIRM: pm_uid,
             }.get(next_status)
             if next_role_user is not None:
@@ -892,4 +896,269 @@ async def force_advance(
     except Exception:
         pass
     return release
+
+
+# ---------------------------------------------------------------------------
+# Git 推送(功能3.6)
+# ---------------------------------------------------------------------------
+async def push_release_to_git(
+    db: AsyncSession,
+    release_id: uuid.UUID,
+    user: "User",
+) -> dict:
+    """把已释放版本的交付物推送到项目 Git 仓库。
+
+    流程:
+        1. 校验 release 状态必须为 released / released_forced。
+        2. 取项目 Git 配置(git_repo_url / git_branch),必须已配置。
+        3. 取当前用户(项目经理)的 git_username / git_token,必须已配置。
+        4. 从 MinIO 下载交付物到临时目录。
+        5. 用 git 命令克隆目标分支到临时目录,把交付物覆盖到指定目录,
+           commit + push,使用 PM 的 git_username + git_token 作为 HTTPS 凭据。
+
+    Args:
+        db: 数据库会话。
+        release_id: 释放 ID。
+        user: 触发推送的用户(应为项目 PM)。
+
+    Returns:
+        包含 commit_sha / pushed_files / repo_url / branch 的 dict。
+
+    Raises:
+        ValueError: 状态不允许、未配置 Git 仓库或凭据等业务错误。
+        RuntimeError: git 命令执行失败。
+    """
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    from urllib.parse import urlparse, quote
+
+    from app.models.user import User  # noqa: F811 (type-only import)
+
+    # 1. 取 release + version + project
+    release = await get_release_by_id(db, release_id)
+    if release is None:
+        raise ValueError("Release not found")
+
+    if release.status not in (ReleaseStatus.RELEASED, ReleaseStatus.RELEASED_FORCED):
+        raise ValueError(
+            f"当前状态不允许推送 Git(必须为已释放): {release.status.value}"
+        )
+
+    # 取 version + project
+    ver_result = await db.execute(
+        select(Version).where(Version.id == release.version_id)
+    )
+    version = ver_result.scalar_one_or_none()
+    if version is None:
+        raise ValueError("Associated version not found")
+
+    proj_result = await db.execute(
+        select(Project).where(Project.id == version.project_id)
+    )
+    project = proj_result.scalar_one_or_none()
+    if project is None:
+        raise ValueError("Associated project not found")
+
+    # 2. 校验项目 Git 配置
+    repo_url = project.git_repo_url
+    branch = project.git_branch or "main"
+    if not repo_url:
+        raise ValueError("项目未配置 Git 仓库地址,请联系项目经理在项目设置中配置")
+
+    # 3. 校验当前用户的 Git 凭据
+    git_username = user.git_username
+    git_token = user.git_token
+    if not git_username or not git_token:
+        raise ValueError(
+            "当前用户未配置 Git 推送凭据(git_username / git_token),"
+            "请在「个人信息」中设置"
+        )
+
+    # 4. 权限校验:必须是项目 PM 或 admin/super_admin
+    from app.services.permission_service import check_pm_permission
+    from app.models.user import SystemRole
+    is_pm = await check_pm_permission(db, user, project.id)
+    is_admin = user.system_role in (SystemRole.ADMIN, SystemRole.SUPER_ADMIN)
+    if not (is_pm or is_admin):
+        raise ValueError("仅项目经理(PM)或管理员可推送 Git")
+
+    # 5. 收集要推送的交付物(从 MinIO 下载到临时目录)
+    artifacts: list[tuple[str, str]] = []  # [(object_name, local_filename)]
+    if release.code_package_path:
+        artifacts.append((release.code_package_path, "code_package.zip"))
+    if release.test_report_path:
+        # 保留原始扩展名(从路径中提取)
+        orig_name = PurePath(release.test_report_path).name
+        # 去掉 UUID 前缀(形如 <uuid>_<原名>)
+        if "_" in orig_name:
+            orig_name = orig_name.split("_", 1)[1]
+        artifacts.append((release.test_report_path, f"test_report_{orig_name}"))
+    if release.review_report_path:
+        orig_name = PurePath(release.review_report_path).name
+        if "_" in orig_name:
+            orig_name = orig_name.split("_", 1)[1]
+        artifacts.append((release.review_report_path, f"review_report_{orig_name}"))
+
+    if not artifacts:
+        raise ValueError("该释放没有可推送的交付物")
+
+    # 6. 构造带凭据的 URL(在 URL 中嵌入 username:token)
+    parsed = urlparse(repo_url)
+    if not parsed.scheme:
+        raise ValueError(
+            f"Git 仓库地址必须包含协议(如 https://): {repo_url}"
+        )
+    # 仅支持 HTTPS 推送(SSH 需要额外配置密钥,暂不支持)
+    if parsed.scheme not in ("https", "http"):
+        raise ValueError(
+            f"仅支持 HTTPS 协议的 Git 仓库,当前协议: {parsed.scheme}"
+        )
+
+    # 构造带凭据的 URL: https://username:token@host/path
+    encoded_user = quote(git_username, safe="")
+    encoded_token = quote(git_token, safe="")
+    authed_url = (
+        f"{parsed.scheme}://{encoded_user}:{encoded_token}@{parsed.netloc}{parsed.path}"
+    )
+    if parsed.query:
+        authed_url += f"?{parsed.query}"
+
+    # 7. 临时目录:克隆目标分支 -> 复制交付物 -> commit -> push
+    tmp_dir = tempfile.mkdtemp(prefix=f"qloop_git_push_{release_id}_")
+    work_dir = os.path.join(tmp_dir, "repo")
+    pushed_files: list[str] = []
+    commit_sha: Optional[str] = None
+
+    try:
+        # 7.1 浅克隆目标分支(只取最新一次提交,加速)
+        clone_cmd = [
+            "git", "clone", "--depth", "1",
+            "--branch", branch,
+            authed_url,
+            work_dir,
+        ]
+        # 在日志中隐藏 token
+        safe_clone_cmd = [
+            "git", "clone", "--depth", "1",
+            "--branch", branch,
+            f"{parsed.scheme}://{encoded_user}:***@{parsed.netloc}{parsed.path}",
+            work_dir,
+        ]
+        logger.info("Git push: cloning repo: %s", " ".join(safe_clone_cmd))
+
+        result = subprocess.run(
+            clone_cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr or ""
+            # 隐藏 token 后再返回错误信息
+            safe_stderr = stderr.replace(encoded_token, "***")
+            raise RuntimeError(f"git clone 失败: {safe_stderr}")
+
+        # 7.2 把交付物复制到目标目录(根目录,避免覆盖 .git)
+        for object_name, local_filename in artifacts:
+            file_data = minio_download_file(object_name)
+            dest_path = os.path.join(work_dir, local_filename)
+            with open(dest_path, "wb") as f:
+                f.write(file_data)
+            pushed_files.append(local_filename)
+
+        # 7.3 git add -> commit -> push
+        # 配置 author 为当前用户
+        author_name = user.full_name or git_username
+        author_email = user.email or f"{git_username}@users.noreply.github.com"
+
+        env = os.environ.copy()
+        env["GIT_AUTHOR_NAME"] = author_name
+        env["GIT_AUTHOR_EMAIL"] = author_email
+        env["GIT_COMMITTER_NAME"] = author_name
+        env["GIT_COMMITTER_EMAIL"] = author_email
+
+        # git add .
+        add_result = subprocess.run(
+            ["git", "add", "-A"],
+            cwd=work_dir, capture_output=True, text=True, env=env, timeout=30,
+        )
+        if add_result.returncode != 0:
+            raise RuntimeError(f"git add 失败: {add_result.stderr}")
+
+        # 检查是否有变更
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=work_dir, capture_output=True, text=True, env=env, timeout=30,
+        )
+        if not status_result.stdout.strip():
+            # 没有变更(文件内容与远程完全一致)
+            commit_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=work_dir, capture_output=True, text=True, env=env, timeout=10,
+            ).stdout.strip()
+            return {
+                "message": "推送完成:交付物与远程一致,无需提交新变更",
+                "commit_sha": commit_sha,
+                "pushed_files": pushed_files,
+                "repo_url": repo_url,
+                "branch": branch,
+                "skipped_commit": True,
+            }
+
+        # 构造提交信息(包含版本、变更点、推送人、日期等必要信息)
+        # 推送日期用北京时间(与前端显示一致)
+        push_date_beijing = datetime.now(timezone.utc) + timedelta(hours=8)
+        push_date_str = push_date_beijing.strftime("%Y-%m-%d %H:%M:%S") + " (北京时间)"
+        # 变更点:取 release.change_notes,无则标记为"无"
+        change_notes = (release.change_notes or "").strip() or "无"
+        commit_msg = (
+            f"qloop: 释放版本 {version.version_number}\n\n"
+            f"版本号: {version.version_number}\n"
+            f"释放编号: {release.release_number}\n"
+            f"变更点: {change_notes}\n"
+            f"推送人: {author_name} ({git_username})\n"
+            f"推送日期: {push_date_str}\n"
+            f"推送文件: {', '.join(pushed_files)}"
+        )
+        commit_result = subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=work_dir, capture_output=True, text=True, env=env, timeout=30,
+        )
+        if commit_result.returncode != 0:
+            raise RuntimeError(f"git commit 失败: {commit_result.stderr}")
+
+        # 取 commit sha
+        sha_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=work_dir, capture_output=True, text=True, env=env, timeout=10,
+        )
+        commit_sha = sha_result.stdout.strip()
+
+        # 7.4 git push(浅克隆后 push 需要先解引用分支)
+        push_result = subprocess.run(
+            ["git", "push", "origin", f"HEAD:{branch}"],
+            cwd=work_dir, capture_output=True, text=True, env=env, timeout=120,
+        )
+        if push_result.returncode != 0:
+            safe_stderr = (push_result.stderr or "").replace(encoded_token, "***")
+            raise RuntimeError(f"git push 失败: {safe_stderr}")
+
+        return {
+            "message": "推送成功",
+            "commit_sha": commit_sha,
+            "pushed_files": pushed_files,
+            "repo_url": repo_url,
+            "branch": branch,
+            "skipped_commit": False,
+        }
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"git 命令超时: {exc}") from exc
+    finally:
+        # 清理临时目录(包含带凭据的 .git,必须删除)
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
 

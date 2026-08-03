@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { getSystemSettings, updateSystemSettings } from '@/api/systemSettings'
+import { formatTime } from '@/utils/status'
 import type { SystemSettingsUpdate } from '@/types'
 
 const loading = ref(false)
@@ -89,7 +90,7 @@ onMounted(async () => {
         <div class="card-header">
           <span>站点品牌</span>
           <span v-if="lastUpdated" class="muted-text">
-            最后更新：{{ lastUpdated.replace('T', ' ').slice(0, 19) }}
+            最后更新：{{ formatTime(lastUpdated) }}
           </span>
         </div>
       </template>

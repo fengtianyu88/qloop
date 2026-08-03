@@ -9,6 +9,48 @@ import type {
   SystemRole,
 } from '@/types'
 
+/**
+ * 将时间字符串统一格式化为北京时间(UTC+8)显示。
+ *
+ * 后端所有时间字段以 UTC 存储,序列化为 ISO 8601 字符串(如 2026-08-03T12:34:56+00:00)。
+ * 此函数解析 ISO 字符串后转换为北京时间显示,无论用户浏览器在哪个时区都显示一致。
+ *
+ * @param t ISO 8601 时间字符串或其他可被 new Date() 解析的格式,null/undefined/空串返回 '—'
+ * @returns 形如 "2026-08-03 20:34:56" 的北京时间字符串
+ */
+export function formatTime(t: string | null | undefined): string {
+  if (!t) return '—'
+  const d = new Date(t)
+  if (isNaN(d.getTime())) return '—'
+  // UTC 时间戳 + 8 小时 = 北京时间
+  const beijing = new Date(d.getTime() + 8 * 60 * 60 * 1000)
+  const year = beijing.getUTCFullYear()
+  const month = String(beijing.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(beijing.getUTCDate()).padStart(2, '0')
+  const hours = String(beijing.getUTCHours()).padStart(2, '0')
+  const minutes = String(beijing.getUTCMinutes()).padStart(2, '0')
+  const seconds = String(beijing.getUTCSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+/**
+ * 将时间字符串格式化为北京时间(UTC+8)的日期+时分(不含秒)。
+ *
+ * 用于列表等紧凑场景,如 "2026-08-03 20:34"。
+ */
+export function formatTimeMinute(t: string | null | undefined): string {
+  if (!t) return '—'
+  const d = new Date(t)
+  if (isNaN(d.getTime())) return '—'
+  const beijing = new Date(d.getTime() + 8 * 60 * 60 * 1000)
+  const year = beijing.getUTCFullYear()
+  const month = String(beijing.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(beijing.getUTCDate()).padStart(2, '0')
+  const hours = String(beijing.getUTCHours()).padStart(2, '0')
+  const minutes = String(beijing.getUTCMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}`
+}
+
 /** 释放状态上下文(用于精细化判断"待上传"还是"待评审") */
 export interface StatusContext {
   code_package_path?: string | null

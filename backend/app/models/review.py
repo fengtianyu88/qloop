@@ -27,7 +27,6 @@ class ReviewType(str, Enum):
 
     CODE_REVIEW = "code_review"
     TEST_REPORT_REVIEW = "test_report_review"
-    EXPERT_REPORT_REVIEW = "expert_report_review"
 
 
 class ReviewResult(str, Enum):

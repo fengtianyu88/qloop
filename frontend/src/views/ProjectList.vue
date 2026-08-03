@@ -6,6 +6,7 @@ import { Download, Upload } from '@element-plus/icons-vue'
 import { getProjects, createProject } from '@/api/projects'
 import { downloadProjectsTemplate, importProjects } from '@/api/imports'
 import { useAuthStore } from '@/stores/auth'
+import { formatTime } from '@/utils/status'
 import type { Project, ProjectCreate } from '@/types'
 
 const router = useRouter()
@@ -133,9 +134,9 @@ function cellValue(row: Project, prop: string): string {
     case 'status':
       return row.is_active ? '活跃' : '停用'
     case 'created_at':
-      return row.created_at?.replace('T', ' ').slice(0, 19) || '—'
+      return formatTime(row.created_at)
     case 'latest_activity_at':
-      return row.latest_activity_at?.replace('T', ' ').slice(0, 19) || '—'
+      return formatTime(row.latest_activity_at)
     case 'description':
       return row.description || '—'
     default:
@@ -536,7 +537,7 @@ onMounted(() => {
               </el-popover>
             </div>
           </template>
-          <template #default="{ row }">{{ row.created_at?.replace('T', ' ').slice(0, 19) }}</template>
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
 
         <!-- 最新动态时间 -->
@@ -580,7 +581,7 @@ onMounted(() => {
             </div>
           </template>
           <template #default="{ row }">
-            <span v-if="row.latest_activity_at">{{ row.latest_activity_at.replace('T', ' ').slice(0, 19) }}</span>
+            <span v-if="row.latest_activity_at">{{ formatTime(row.latest_activity_at) }}</span>
             <span v-else>—</span>
           </template>
         </el-table-column>

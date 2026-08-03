@@ -11,6 +11,8 @@ import {
   confirmRelease,
   downloadArtifact,
   getExternalDownloadLinks,
+  pushReleaseToGit,
+  type GitPushResult,
 } from '@/api/releases'
 import { getReleaseReviews, triggerReview } from '@/api/reviews'
 import { getProject } from '@/api/projects'
@@ -22,6 +24,7 @@ import {
   reviewTypeLabel,
   statusLabel,
   statusTagType,
+  formatTime,
 } from '@/utils/status'
 import type { ExternalRecipientLink, LLMReview, Release, ReviewType } from '@/types'
 
@@ -35,6 +38,9 @@ const release = ref<Release | null>(null)
 const projectName = ref<string>('')
 // 功能7: 缓存项目 PM 用户 ID,用于 canForceAdvance 判断当前用户是否为该项目 PM
 const projectPmUserId = ref<string>('')
+// 功能3.6: 缓存项目 Git 配置,用于判断是否显示推送 Git 按钮及配置缺失提示
+const projectGitRepoUrl = ref<string>('')
+const projectGitBranch = ref<string>('')
 const reviews = ref<LLMReview[]>([])
 const loading = ref(false)
 // 功能2.4: 外部接收方下载链接(含 access_token)
@@ -594,6 +600,87 @@ async function handleConfirm() {
   }
 }
 
+// ============ 功能3.6: 推送 Git ============
+// 推送状态:loading / 结果 / 错误信息
+const gitPushing = ref(false)
+const gitPushResult = ref<GitPushResult | null>(null)
+
+// 是否可以推送 Git:
+// - release 状态必须为 released / released_forced
+// - 当前用户必须是项目 PM 或 admin/super_admin
+const canPushGit = computed(() => {
+  if (!release.value || !authStore.user) return false
+  if (!isReleased.value) return false
+  // admin/super_admin 可推送
+  if (authStore.isAdmin) return true
+  // 项目 PM 可推送
+  const userId = authStore.user.id
+  return projectPmUserId.value === userId
+})
+
+// 项目是否已配置 Git 仓库地址
+const projectGitConfigured = computed(() => !!projectGitRepoUrl.value)
+
+async function handlePushGit() {
+  if (!release.value) return
+  // 前置校验:提示用户去配置
+  if (!projectGitConfigured.value) {
+    try {
+      await ElMessageBox.confirm(
+        '该项目尚未配置 Git 仓库地址。\n\n请前往「项目详情」页面,点击「Git 配置」按钮设置 Git 仓库地址和分支。',
+        'Git 配置缺失',
+        {
+          confirmButtonText: '前往项目详情',
+          cancelButtonText: '稍后配置',
+          type: 'warning',
+        },
+      )
+      // 用户点击前往:跳转到项目详情页
+      if (release.value.project_id) {
+        router.push(`/projects/${release.value.project_id}`)
+      }
+    } catch {
+      // 用户取消
+    }
+    return
+  }
+
+  // 二次确认
+  try {
+    const branch = projectGitBranch.value || 'main'
+    await ElMessageBox.confirm(
+      `将使用你的 Git 账号凭据推送交付物到:\n${projectGitRepoUrl.value} (分支: ${branch})\n\n` +
+      '推送的交付物:代码包 + 测试报告 + 评审报告(若有)\n' +
+      '提交作者将使用你的姓名和邮箱。',
+      '推送 Git 确认',
+      {
+        confirmButtonText: '确认推送',
+        cancelButtonText: '取消',
+        type: 'info',
+      },
+    )
+  } catch {
+    return  // 用户取消
+  }
+
+  gitPushing.value = true
+  gitPushResult.value = null
+  try {
+    const result = await pushReleaseToGit(releaseId.value)
+    gitPushResult.value = result
+    if (result.skipped_commit) {
+      ElMessage.success(result.message || '交付物与远程一致,无需提交')
+    } else {
+      ElMessage.success(`推送成功,提交 SHA: ${result.commit_sha?.slice(0, 8) || '—'}`)
+    }
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail || e?.message || '推送失败'
+    ElMessage.error(detail)
+  } finally {
+    gitPushing.value = false
+  }
+}
+
 // 下载链接处理
 function downloadUrl(link: string): string {
   // 若为相对路径则拼接 /api 前缀走代理
@@ -629,11 +716,6 @@ async function downloadArtifactFile(fileType: 'code_package' | 'test_report' | '
   } finally {
     downloading.value = ''
   }
-}
-
-function formatTime(t: string | null): string {
-  if (!t) return '—'
-  return t.replace('T', ' ').slice(0, 19)
 }
 
 // 从 MinIO 对象路径中提取文件名
@@ -764,10 +846,15 @@ async function loadRelease() {
         projectName.value = project?.name || ''
         // 功能7: 缓存 PM 用户 ID,用于 canForceAdvance 判断
         projectPmUserId.value = project?.pm_user_id || ''
+        // 功能3.6: 缓存项目 Git 配置,用于推送 Git 按钮显示与校验
+        projectGitRepoUrl.value = project?.git_repo_url || ''
+        projectGitBranch.value = project?.git_branch || ''
       } catch {
         // 项目名称加载失败不阻塞主流程
         projectName.value = ''
         projectPmUserId.value = ''
+        projectGitRepoUrl.value = ''
+        projectGitBranch.value = ''
       }
     }
     // 已释放时加载外部接收方下载链接(功能2.4)
@@ -964,6 +1051,37 @@ const canForceAdvance = computed(() => {
   const userId = authStore.user.id
   if (projectPmUserId.value && projectPmUserId.value === userId) return true
   return false
+})
+
+// 每步独立的特批放行判断:仅当该步骤未完成且当前状态允许推进时显示
+// 步骤2:代码评审阶段 - code_pending_review 或 代码评审失败
+const canForceAdvanceStep2 = computed(() => {
+  if (!canForceAdvance.value || !release.value) return false
+  const s = release.value.status
+  if (s === 'code_pending_review') return true
+  if (s === 'review_failed' && failedReviewType.value === 'code_review') return true
+  return false
+})
+// 步骤3:测试报告评审阶段 - test_pending_review 或 测试报告评审失败
+const canForceAdvanceStep3 = computed(() => {
+  if (!canForceAdvance.value || !release.value) return false
+  const s = release.value.status
+  if (s === 'test_pending_review') return true
+  if (s === 'review_failed' && failedReviewType.value === 'test_report_review') return true
+  return false
+})
+// 步骤4:评审报告上传阶段 - test_pending_review 状态且评审报告未上传
+const canForceAdvanceStep4 = computed(() => {
+  if (!canForceAdvance.value || !release.value) return false
+  const s = release.value.status
+  // 评审报告上传发生在 test_pending_review 阶段,未上传时可特批跳过
+  if (s === 'test_pending_review' && !release.value.review_report_path) return true
+  return false
+})
+// 步骤5:PM 确认释放阶段 - pending_confirm
+const canForceAdvanceStep5 = computed(() => {
+  if (!canForceAdvance.value || !release.value) return false
+  return release.value.status === 'pending_confirm'
 })
 
 async function handleSkipReview() {
@@ -1439,12 +1557,12 @@ onMounted(async () => {
                       <el-icon><Clock /></el-icon>稍后评审
                     </el-button>
                   </el-tooltip>
-                  <el-tooltip content="跳过当前阶段评审，直接进入下一阶段" placement="top">
-                    <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
-                      <el-icon><Promotion /></el-icon>特批放行
-                    </el-button>
-                  </el-tooltip>
                 </template>
+                <el-tooltip content="跳过代码评审，直接进入下一阶段" placement="top">
+                  <el-button v-if="canForceAdvanceStep2" type="danger" plain size="small" @click="handleForceAdvance">
+                    <el-icon><Promotion /></el-icon>特批放行本步
+                  </el-button>
+                </el-tooltip>
               </div>
             </div>
             <div v-if="getReviewByType('code_review')" class="review-result-box">
@@ -1538,12 +1656,12 @@ onMounted(async () => {
                       <el-icon><Clock /></el-icon>稍后评审
                     </el-button>
                   </el-tooltip>
-                  <el-tooltip content="跳过当前阶段评审，直接进入下一阶段" placement="top">
-                    <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
-                      <el-icon><Promotion /></el-icon>特批放行
-                    </el-button>
-                  </el-tooltip>
                 </template>
+                <el-tooltip content="跳过测试报告评审，直接进入下一阶段" placement="top">
+                  <el-button v-if="canForceAdvanceStep3" type="danger" plain size="small" @click="handleForceAdvance">
+                    <el-icon><Promotion /></el-icon>特批放行本步
+                  </el-button>
+                </el-tooltip>
               </div>
             </div>
             <div v-if="getReviewByType('test_report_review')" class="review-result-box">
@@ -1608,6 +1726,11 @@ onMounted(async () => {
                     style="margin-top: 8px; width: 100%"
                   />
                 </template>
+                <el-tooltip content="跳过评审报告上传，直接进入 PM 确认阶段" placement="top">
+                  <el-button v-if="canForceAdvanceStep4" type="danger" plain size="small" @click="handleForceAdvance">
+                    <el-icon><Promotion /></el-icon>特批放行本步
+                  </el-button>
+                </el-tooltip>
               </div>
             </div>
           </div>
@@ -1642,8 +1765,8 @@ onMounted(async () => {
                   <el-button type="success" size="small" :loading="confirming" @click="handleConfirm">
                     <el-icon><Check /></el-icon>确认释放
                   </el-button>
-                  <el-button v-if="canForceAdvance" type="danger" plain size="small" @click="handleForceAdvance">
-                    <el-icon><Promotion /></el-icon>特批放行
+                  <el-button v-if="canForceAdvanceStep5" type="danger" plain size="small" @click="handleForceAdvance">
+                    <el-icon><Promotion /></el-icon>特批放行本步
                   </el-button>
                 </template>
                 <template v-if="release.status === 'released' || release.status === 'released_forced'">
@@ -1652,8 +1775,45 @@ onMounted(async () => {
                   <el-button v-if="release.download_link" type="primary" size="small" @click="openLink(release.download_link)">
                     <el-icon><Download /></el-icon>下载完整交付包
                   </el-button>
+                  <!-- 功能3.6: 推送 Git 按钮(仅 PM/管理员可见,在已释放后显示) -->
+                  <el-button
+                    v-if="canPushGit"
+                    type="success"
+                    size="small"
+                    :loading="gitPushing"
+                    @click="handlePushGit"
+                  >
+                    <el-icon><Upload /></el-icon>推送 Git
+                  </el-button>
+                  <!-- Git 配置缺失提示 -->
+                  <el-tag v-if="canPushGit && !projectGitConfigured" type="warning" size="small" effect="plain">
+                    项目未配置 Git 仓库
+                  </el-tag>
                 </template>
               </div>
+            </div>
+            <!-- 功能3.6: Git 推送结果展示 -->
+            <div v-if="gitPushResult" class="git-push-result-box">
+              <el-alert
+                :type="gitPushResult.skipped_commit ? 'info' : 'success'"
+                :closable="false"
+                show-icon
+                :title="gitPushResult.message"
+              >
+                <template #default>
+                  <div v-if="!gitPushResult.skipped_commit && gitPushResult.commit_sha">
+                    <strong>提交 SHA:</strong>
+                    <code class="git-sha">{{ gitPushResult.commit_sha.slice(0, 12) }}…</code>
+                  </div>
+                  <div v-if="gitPushResult.pushed_files && gitPushResult.pushed_files.length">
+                    <strong>推送文件:</strong>{{ gitPushResult.pushed_files.join(', ') }}
+                  </div>
+                  <div>
+                    <strong>目标仓库:</strong>{{ gitPushResult.repo_url }}
+                    (分支: {{ gitPushResult.branch }})
+                  </div>
+                </template>
+              </el-alert>
             </div>
           </div>
         </div>
@@ -2564,6 +2724,24 @@ onMounted(async () => {
 .timeline-label {
   color: #909399;
   margin-right: 4px;
+}
+
+/* 功能3.6: Git 推送结果展示 */
+.git-push-result-box {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: #f5f7fa;
+  font-size: 13px;
+}
+.git-sha {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: #409eff;
+  background: #ecf5ff;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 4px;
 }
 
 </style>

@@ -18,8 +18,8 @@ async def check_project_access(
     - an admin/super_admin, OR
     - the PM of the project, OR
     - a ProjectMember of the project, OR
-    - **assigned as developer/tester/expert on any version of the project**
-      (兜底: PM 创建版本时虽然指定了 developer_id/tester_id/expert_id,
+    - **assigned as developer/tester on any version of the project**
+      (兜底: PM 创建版本时虽然指定了 developer_id/tester_id,
       但历史数据可能未自动加入 ProjectMember 表,这里补齐权限)
 
     Args:
@@ -54,7 +54,7 @@ async def check_project_access(
     if result.scalar_one_or_none() is not None:
         return True
 
-    # 兜底: 检查是否被分配为该项目任一版本的 developer/tester/expert
+    # 兜底: 检查是否被分配为该项目任一版本的 developer/tester
     # (历史数据兼容: 早期 create_version 未自动加入 ProjectMember)
     result = await db.execute(
         select(Version).where(
@@ -63,7 +63,6 @@ async def check_project_access(
             or_(
                 Version.developer_id == user.id,
                 Version.tester_id == user.id,
-                Version.expert_id == user.id,
             ),
         )
     )

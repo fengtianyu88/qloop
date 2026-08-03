@@ -36,6 +36,7 @@ from app.services.release_service import (
     upload_test_report,
     increment_download_count,
     verify_access_token,
+    push_release_to_git,
 )
 from app.storage.minio_client import minio_generate_presigned_url
 
@@ -289,10 +290,10 @@ async def upload_review_report_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Upload a review/expert report for a release.
+    """Upload a review report for a release.
 
     The file is stored in MinIO and the release status is updated to
-    ``EXPERT_PENDING_REVIEW``.
+    ``PENDING_CONFIRM``.
     """
     release = await _get_release_with_project_access(db, release_id, current_user)
 
@@ -702,7 +703,6 @@ async def skip_review_endpoint(
     Permission rules:
     - In code_pending_review: developer (who uploaded code) or admin/super_admin
     - In test_pending_review: tester (who uploaded test report) or admin/super_admin
-    - In expert_pending_review: external_expert (who uploaded review report) or admin/super_admin
     - Other statuses: not allowed (400)
     """
     from app.models.user import SystemRole
@@ -716,7 +716,6 @@ async def skip_review_endpoint(
     status_uploader_map = {
         ReleaseStatus.CODE_PENDING_REVIEW: "code_package_uploaded_by",
         ReleaseStatus.TEST_PENDING_REVIEW: "test_report_uploaded_by",
-        ReleaseStatus.EXPERT_PENDING_REVIEW: "review_report_uploaded_by",
     }
 
     if release.status not in status_uploader_map:
@@ -828,4 +827,55 @@ async def force_advance_endpoint(
 
     response = ReleaseResponse.model_validate(updated)
     return await _enrich_release_response(db, updated, response)
+
+
+@router.post("/{release_id}/push-git")
+async def push_release_to_git_endpoint(
+    release_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """把已释放版本的交付物推送到项目 Git 仓库(功能3.6)。
+
+    使用当前用户(项目经理)的 Git 账号凭据,推送到项目配置的 Git 仓库分支。
+
+    前置条件:
+    - release 状态必须为 released / released_forced
+    - 项目必须已配置 git_repo_url(可在项目详情页由 PM 修改)
+    - 当前用户必须已配置 git_username + git_token(可在「个人信息」中设置)
+    - 当前用户必须是项目 PM 或 admin/super_admin
+    """
+    try:
+        result = await push_release_to_git(
+            db=db, release_id=release_id, user=current_user
+        )
+    except ValueError as exc:
+        # 业务错误(状态不对、未配置等)返回 400
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except RuntimeError as exc:
+        # git 命令执行失败返回 500
+        logger.error("Git push failed for release %s: %s", release_id, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Git 推送失败: {exc}",
+        )
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="push_release_to_git",
+        resource_type="release",
+        resource_id=str(release_id),
+        details={
+            "commit_sha": result.get("commit_sha"),
+            "branch": result.get("branch"),
+            "pushed_files": result.get("pushed_files", []),
+            "skipped_commit": result.get("skipped_commit", False),
+        },
+    )
+
+    return result
 

@@ -236,7 +236,6 @@ async def create_version(
         description=version_create.description,
         developer_id=version_create.developer_id,
         tester_id=version_create.tester_id,
-        expert_id=version_create.expert_id,
     )
     db.add(version)
     await db.flush()
@@ -250,12 +249,11 @@ async def create_version(
     db.add(release)
     await db.flush()  # 刷新以获取 release.id,用于通知 link_url
 
-    # 自动把 developer/tester/expert 加入 ProjectMember(如果尚未存在)
+    # 自动把 developer/tester 加入 ProjectMember(如果尚未存在)
     # 这样他们登录后才能访问项目和 release
     role_assignments = [
         (version_create.developer_id, ProjectRole.DEVELOPER),
         (version_create.tester_id,    ProjectRole.TESTER),
-        (version_create.expert_id,    ProjectRole.EXTERNAL_EXPERT),
     ]
     for user_id, role in role_assignments:
         if user_id is None:
@@ -280,7 +278,7 @@ async def create_version(
     await db.commit()
     await db.refresh(version)
 
-    # 通知被分配的 developer/tester/expert(通知系统)
+    # 通知被分配的 developer/tester(通知系统)
     # PM 自己不需要通知(他是创建者);user_id 为 None 时跳过
     try:
         project_result = await db.execute(
@@ -299,9 +297,6 @@ async def create_version(
             (version.tester_id, NotificationType.TASK_ASSIGNED,
              "你有新的测试任务",
              f"{project_name} {version_no} 等待代码评审通过后需要你上传测试报告"),
-            (version.expert_id, NotificationType.TASK_ASSIGNED,
-             "你有新的评审任务",
-             f"{project_name} {version_no} 等待测试报告评审通过后需要你上传专家评审报告"),
         ]
         for uid, ntype, title, content_text in role_notifications:
             if uid is None or uid == pm_user_id:
@@ -467,7 +462,6 @@ async def list_versions_with_release_status(
         ReleaseStatus.RELEASED: 6,
         ReleaseStatus.REVIEW_FAILED: 5,
         ReleaseStatus.PENDING_CONFIRM: 4,
-        ReleaseStatus.EXPERT_PENDING_REVIEW: 3,
         ReleaseStatus.TEST_PENDING_REVIEW: 2,
         ReleaseStatus.CODE_PENDING_REVIEW: 1,
         ReleaseStatus.DRAFT: 0,
@@ -480,7 +474,6 @@ async def list_versions_with_release_status(
                 "description": ver.description,
                 "developer_id": ver.developer_id,
                 "tester_id": ver.tester_id,
-                "expert_id": ver.expert_id,
                 "project_id": ver.project_id,
                 "created_at": ver.created_at,
                 "updated_at": ver.updated_at,
@@ -492,4 +485,31 @@ async def list_versions_with_release_status(
                 by_id[ver.id]["latest_release_status"] = rel_status
 
     return list(by_id.values())
+
+
+async def delete_project(
+    db: AsyncSession, project_id: uuid.UUID
+) -> bool:
+    """Soft-delete a project by setting is_active=False.
+
+    The project data is preserved for audit purposes; only ``is_active`` is
+    set to ``False`` so it no longer appears in project lists.
+
+    Args:
+        db: The async database session.
+        project_id: The project ID to delete.
+
+    Returns:
+        True if the project was found and deactivated, False otherwise.
+    """
+    result = await db.execute(
+        select(Project).where(Project.id == project_id)
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        return False
+    project.is_active = False
+    await db.commit()
+    return True
+
 

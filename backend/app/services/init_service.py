@@ -57,23 +57,6 @@ _DEFAULT_PROMPT_TEMPLATES: Dict[ReviewType, str] = {
         '  "risk_points": "风险点"\n'
         "}}"
     ),
-    ReviewType.EXPERT_REPORT_REVIEW: (
-        "你是一名资深的专家报告评审专家。请对以下评审报告进行评审,从完整性、正确性、性能、安全性四个维度打分(0-100)。\n\n"
-        "评审报告路径: {review_report_path}\n\n"
-        "请按以下 JSON 格式输出评审结果:\n"
-        "{{\n"
-        '  "total_score": 0-100 的总分,\n'
-        '  "dimensions": {{\n'
-        '    "completeness": {{"score": 0-100, "comment": "..."}},\n'
-        '    "correctness": {{"score": 0-100, "comment": "..."}},\n'
-        '    "performance": {{"score": 0-100, "comment": "..."}},\n'
-        '    "security": {{"score": 0-100, "comment": "..."}}\n'
-        "  }},\n"
-        '  "conclusion": "通过/不通过及总体结论",\n'
-        '  "suggestions": "改进建议",\n'
-        '  "risk_points": "风险点"\n'
-        "}}"
-    ),
 }
 
 

@@ -10,6 +10,8 @@ import { getUsers } from '@/api/users'
 import {
   statusLabel,
   statusTagType,
+  formatTime,
+  formatTimeMinute,
 } from '@/utils/status'
 import type {
   Project,
@@ -250,7 +252,7 @@ function releaseCellValue(row: ReleaseListItem, prop: string): string {
     case 'status':
       return statusLabel(row.status)
     case 'created_at':
-      return row.created_at?.replace('T', ' ').slice(0, 19) || '—'
+      return formatTime(row.created_at)
     default:
       return String((row as any)[prop] ?? '')
   }
@@ -367,7 +369,7 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="updated_at" label="更新时间" width="160">
-              <template #default="{ row }">{{ row.updated_at?.replace('T', ' ').slice(0, 19) }}</template>
+              <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
             </el-table-column>
           </el-table>
           <div v-else style="height:100%">
@@ -396,7 +398,7 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="updated_at" label="释放时间" width="160">
-              <template #default="{ row }">{{ row.updated_at?.replace('T', ' ').slice(0, 19) }}</template>
+              <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
             </el-table-column>
           </el-table>
           <div v-else style="height:100%">
@@ -693,7 +695,7 @@ onMounted(() => {
                 </el-popover>
               </div>
             </template>
-            <template #default="{ row }">{{ row.created_at?.replace('T', ' ').slice(0, 19) }}</template>
+            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
           </el-table-column>
 
           <el-table-column label="操作" width="100" fixed="right" align="center">
@@ -749,7 +751,7 @@ onMounted(() => {
             <template #default>—</template>
           </el-table-column>
           <el-table-column prop="created_at" label="创建时间" width="170">
-            <template #default="{ row }">{{ row.created_at?.replace('T', ' ').slice(0, 19) }}</template>
+            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
           </el-table-column>
           <el-table-column label="操作" width="100" fixed="right" align="center">
             <template #default="{ row }">

@@ -27,7 +27,6 @@ class ProjectRole(str, Enum):
     PROJECT_MANAGER = "project_manager"
     DEVELOPER = "developer"
     TESTER = "tester"
-    EXTERNAL_EXPERT = "external_expert"
 
 
 class ReleaseStatus(str, Enum):
@@ -36,7 +35,6 @@ class ReleaseStatus(str, Enum):
     DRAFT = "draft"
     CODE_PENDING_REVIEW = "code_pending_review"
     TEST_PENDING_REVIEW = "test_pending_review"
-    EXPERT_PENDING_REVIEW = "expert_pending_review"
     PENDING_CONFIRM = "pending_confirm"
     RELEASED = "released"
     RELEASED_FORCED = "released_forced"  # 已特批释放:含特批放行的释放
@@ -58,6 +56,9 @@ class Project(Base):
     pm_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
+    # 项目 Git 仓库地址(由项目经理设置,用于释放后推送交付物)
+    git_repo_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    git_branch: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
     )
@@ -133,9 +134,6 @@ class Version(Base):
     tester_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
-    expert_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -163,9 +161,6 @@ class Version(Base):
     )
     tester: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[tester_id]
-    )
-    expert: Mapped[Optional["User"]] = relationship(
-        "User", foreign_keys=[expert_id]
     )
     releases: Mapped[List["Release"]] = relationship(
         "Release", back_populates="version", cascade="all, delete-orphan"

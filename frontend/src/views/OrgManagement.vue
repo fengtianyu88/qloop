@@ -6,6 +6,7 @@ import { getOrgTree, createOrg, updateOrg, deleteOrg, createAdminScope, getAdmin
 import { getUsers } from '@/api/users'
 import { downloadOrganizationsTemplate, importOrganizations } from '@/api/imports'
 import { useAuthStore } from '@/stores/auth'
+import { formatTimeMinute as formatDate } from '@/utils/status'
 import type {
   AdminScope,
   OrgTreeNode,
@@ -130,17 +131,6 @@ async function handleDeleteOrgType(typeId: string, typeName: string) {
     const msg = e?.response?.data?.detail || '删除失败'
     ElMessage.error(msg)
   }
-}
-
-// 格式化日期
-function formatDate(dateStr: string): string {
-  if (!dateStr) return '—'
-  const d = new Date(dateStr)
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  const hours = String(d.getHours()).padStart(2, '0')
-  const mins = String(d.getMinutes()).padStart(2, '0')
-  return `${d.getFullYear()}-${month}-${day} ${hours}:${mins}`
 }
 
 async function handleDownloadTemplate() {

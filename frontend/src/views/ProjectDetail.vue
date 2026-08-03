@@ -2,12 +2,12 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { getProject, addMember, updateMember, deleteMember, createVersion } from '@/api/projects'
+import { getProject, addMember, updateMember, deleteMember, createVersion, updateProjectGitConfig } from '@/api/projects'
 import { getReleasesByVersion } from '@/api/releases'
 import request from '@/api/request'
 import { getUsers } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
-import { roleLabel } from '@/utils/status'
+import { roleLabel, formatTime } from '@/utils/status'
 import type {
   Project,
   ProjectMember,
@@ -348,6 +348,51 @@ function goBack() {
   router.push('/projects')
 }
 
+// ------------------------- 项目 Git 配置 -------------------------
+const gitDialogVisible = ref(false)
+const gitFormRef = ref<FormInstance>()
+const gitForm = reactive<{ git_repo_url: string; git_branch: string }>({
+  git_repo_url: '',
+  git_branch: '',
+})
+const gitRules: FormRules = {
+  git_repo_url: [
+    { max: 500, message: 'Git 仓库地址长度不能超过 500', trigger: 'blur' },
+  ],
+  git_branch: [
+    { max: 200, message: '分支名长度不能超过 200', trigger: 'blur' },
+  ],
+}
+const gitSubmitting = ref(false)
+
+function openGitDialog() {
+  if (!project.value) return
+  gitForm.git_repo_url = project.value.git_repo_url || ''
+  gitForm.git_branch = project.value.git_branch || ''
+  gitDialogVisible.value = true
+}
+
+async function handleSaveGitConfig() {
+  if (!gitFormRef.value) return
+  await gitFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    gitSubmitting.value = true
+    try {
+      const updated = await updateProjectGitConfig(projectId.value, {
+        git_repo_url: gitForm.git_repo_url || '',
+        git_branch: gitForm.git_branch || '',
+      })
+      project.value = updated
+      ElMessage.success('项目 Git 配置已保存')
+      gitDialogVisible.value = false
+    } catch {
+      // 错误已统一提示
+    } finally {
+      gitSubmitting.value = false
+    }
+  })
+}
+
 onMounted(async () => {
   await loadProject()
   await loadUsers()
@@ -387,7 +432,12 @@ onMounted(async () => {
     <!-- 项目基本信息 -->
     <el-card class="table-card" shadow="never" v-if="project">
       <template #header>
-        <span>项目基本信息</span>
+        <div class="card-header">
+          <span>项目基本信息</span>
+          <el-button v-if="isPm" type="primary" size="small" @click="openGitDialog">
+            <el-icon><Setting /></el-icon>Git 配置
+          </el-button>
+        </div>
       </template>
       <el-descriptions :column="3" border>
         <el-descriptions-item label="项目名称">{{ project.name }}</el-descriptions-item>
@@ -398,13 +448,21 @@ onMounted(async () => {
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="创建时间">
-          {{ project.created_at?.replace('T', ' ').slice(0, 19) }}
+          {{ formatTime(project.created_at) }}
         </el-descriptions-item>
         <el-descriptions-item label="更新时间">
-          {{ project.updated_at?.replace('T', ' ').slice(0, 19) }}
+          {{ formatTime(project.updated_at) }}
         </el-descriptions-item>
         <el-descriptions-item label="项目描述" :span="3">
           {{ project.description || '—' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="Git 仓库地址" :span="2">
+          <span v-if="project.git_repo_url">{{ project.git_repo_url }}</span>
+          <span v-else class="muted-text">未配置</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="Git 分支">
+          <span v-if="project.git_branch">{{ project.git_branch }}</span>
+          <span v-else class="muted-text">未配置</span>
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
@@ -469,7 +527,7 @@ onMounted(async () => {
           <template #default="{ row }">{{ userName(row.tester_id) }}</template>
         </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="170">
-          <template #default="{ row }">{{ row.created_at?.replace('T', ' ').slice(0, 19) }}</template>
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
@@ -572,6 +630,36 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="versionDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="versionSubmitting" @click="handleCreateVersion">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 项目 Git 配置对话框 -->
+    <el-dialog v-model="gitDialogVisible" title="项目 Git 配置" width="540px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="用于版本释放后,推送交付物到项目 Git 仓库"
+        description="仅项目经理(PM)或管理员可修改。推送时使用项目经理本人的 Git 账号凭据。"
+        style="margin-bottom:16px;"
+      />
+      <el-form ref="gitFormRef" :model="gitForm" :rules="gitRules" label-width="110px">
+        <el-form-item label="Git 仓库地址" prop="git_repo_url">
+          <el-input
+            v-model="gitForm.git_repo_url"
+            placeholder="如 https://github.com/org/repo.git"
+          />
+        </el-form-item>
+        <el-form-item label="目标分支" prop="git_branch">
+          <el-input
+            v-model="gitForm.git_branch"
+            placeholder="如 main / master / release/v1.0"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="gitDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="gitSubmitting" @click="handleSaveGitConfig">保存</el-button>
       </template>
     </el-dialog>
   </div>

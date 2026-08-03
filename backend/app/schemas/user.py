@@ -87,6 +87,10 @@ class UserResponse(BaseModel):
     org_unit_id: Optional[uuid.UUID] = None
     department: Optional[str] = None
     section: Optional[str] = None
+    # Git 推送凭据(仅返回用户名,不返回 token 原文)
+    git_username: Optional[str] = None
+    # 标记是否已配置 Git token(不返回 token 原文,由 ORM @property 推断)
+    has_git_token: bool = False
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -145,3 +149,27 @@ class ResetPasswordRequest(BaseModel):
     def validate_new_password(cls, v: str) -> str:
         """校验新密码强度(P1-8)。"""
         return _check_password_strength(v)
+
+
+class ChangePasswordRequest(BaseModel):
+    """Schema for changing the current user's own password."""
+
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=6, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        """校验新密码强度(P1-8)。"""
+        return _check_password_strength(v)
+
+
+class UserGitCredentialsRequest(BaseModel):
+    """Schema for updating the current user's own Git push credentials.
+
+    用于版本释放后,以当前用户(项目经理)的 Git 账号推送到项目 Git 仓库。
+    git_token 可以传空字符串表示清除。
+    """
+
+    git_username: Optional[str] = Field(None, max_length=200)
+    git_token: Optional[str] = Field(None, max_length=500)

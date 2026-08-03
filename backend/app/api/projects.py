@@ -10,6 +10,7 @@ from app.dependencies import get_current_user, require_roles
 from app.models.user import SystemRole, User
 from app.schemas.project import (
     ProjectCreate,
+    ProjectGitConfigRequest,
     ProjectMemberCreate,
     ProjectMemberResponse,
     ProjectMemberUpdate,
@@ -25,6 +26,7 @@ from app.services.project_service import (
     add_project_member,
     create_project,
     create_version,
+    delete_project,
     delete_project_member,
     get_project_by_id,
     get_projects_for_user,
@@ -96,6 +98,108 @@ async def get_project(
         )
 
     return ProjectResponse.model_validate(project)
+
+
+@router.put("/{project_id}/git-config", response_model=ProjectResponse)
+async def update_project_git_config(
+    project_id: uuid.UUID,
+    request: ProjectGitConfigRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """更新项目 Git 仓库配置(git_repo_url / git_branch)。
+
+    仅项目经理(PM)/admin/super_admin 可修改。传入空字符串会清除对应字段。
+    用于版本释放后推送交付物到指定 Git 仓库。
+    """
+    project = await get_project_by_id(db=db, project_id=project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    is_pm = await check_pm_permission(db, current_user, project_id)
+    is_admin = current_user.system_role in (
+        SystemRole.ADMIN, SystemRole.SUPER_ADMIN,
+    ) or getattr(current_user.system_role, "value", None) in (
+        "admin", "super_admin",
+    )
+    if not (is_pm or is_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the project manager or admin can update Git config",
+        )
+
+    changed_fields: list = []
+    if request.git_repo_url is not None:
+        new_url = request.git_repo_url.strip() or None
+        if project.git_repo_url != new_url:
+            project.git_repo_url = new_url
+            changed_fields.append("git_repo_url")
+    if request.git_branch is not None:
+        new_branch = request.git_branch.strip() or None
+        if project.git_branch != new_branch:
+            project.git_branch = new_branch
+            changed_fields.append("git_branch")
+
+    if changed_fields:
+        await db.commit()
+        await create_audit_log(
+            db=db,
+            user_id=current_user.id,
+            action="update_project_git_config",
+            resource_type="project",
+            resource_id=str(project_id),
+            details={"changed_fields": changed_fields},
+        )
+
+    # 重新加载以返回最新数据(get_project_by_id 会自动 enrich)
+    refreshed = await get_project_by_id(db=db, project_id=project_id)
+    return ProjectResponse.model_validate(refreshed)
+
+
+@router.delete(
+    "/{project_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def delete_project_endpoint(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(SystemRole.ADMIN, SystemRole.SUPER_ADMIN)
+    ),
+):
+    """Soft-delete a project (ADMIN, SUPER_ADMIN only).
+
+    Sets is_active=False; project data is preserved for audit.
+    """
+    project = await get_project_by_id(db=db, project_id=project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    deleted = await delete_project(db=db, project_id=project_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="delete_project",
+        resource_type="project",
+        resource_id=str(project_id),
+        details={
+            "name": project.name,
+            "soft_delete": True,
+        },
+    )
+    return {"message": "项目已删除"}
 
 
 @router.post(
@@ -540,7 +644,7 @@ async def get_project_dashboard(
 
     # 4. 按状态归类
     #    - draft: 草稿
-    #    - in_review: 评审中(code_pending_review / test_pending_review / expert_pending_review)
+    #    - in_review: 评审中(code_pending_review / test_pending_review)
     #    - pending_confirm: 待释放
     #    - released: 已释放
     #    - failed: 阻塞中(review_failed)
@@ -554,7 +658,7 @@ async def get_project_dashboard(
         s = st.value if hasattr(st, "value") else str(st)
         if s == "draft":
             draft += 1
-        elif s in ("code_pending_review", "test_pending_review", "expert_pending_review"):
+        elif s in ("code_pending_review", "test_pending_review"):
             in_review += 1
         elif s == "pending_confirm":
             pending_confirm += 1

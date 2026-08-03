@@ -1,4 +1,4 @@
-"""Prompt templates for the three LLM review types.
+"""Prompt templates for the LLM review types.
 
 Each template contains a ``{content}`` placeholder that is filled with the
 prepared review content (code package summary / parsed document text) before
@@ -66,29 +66,9 @@ TEST_REPORT_REVIEW_PROMPT = """\
 
 
 # ---------------------------------------------------------------------------
-# 3. Expert report review prompt
-# ---------------------------------------------------------------------------
-EXPERT_REPORT_REVIEW_PROMPT = """\
-你是一位资深的专家评审委员会成员。请对以下提交的专家评审报告进行 meta 评审（即对专家评审工作的质量进行评审）。
-
-评审维度（每项按 0-100 打分）：
-1. 评审深度：是否深入分析了算法原理、实现细节与潜在影响，是否停留在表面。
-2. 评审准确性：技术判断是否正确、引用的标准与数据是否准确、结论是否有充分依据。
-3. 建设性：是否提出了具体可行的改进建议、建议是否有助于提升软件质量。
-4. 规范性：报告格式是否规范、术语是否统一、逻辑是否清晰、是否签署完整。
-
-请基于以下专家评审报告内容进行评审：
-
-{content}
-
-""" + _OUTPUT_FORMAT
-
-
-# ---------------------------------------------------------------------------
 # Mapping from ReviewType.value -> prompt template
 # ---------------------------------------------------------------------------
 PROMPT_MAP = {
     ReviewType.CODE_REVIEW.value: CODE_REVIEW_PROMPT,
     ReviewType.TEST_REPORT_REVIEW.value: TEST_REPORT_REVIEW_PROMPT,
-    ReviewType.EXPERT_REPORT_REVIEW.value: EXPERT_REPORT_REVIEW_PROMPT,
 }

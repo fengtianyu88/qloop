@@ -40,10 +40,9 @@ async def search_releases(
         - change_notes: Partial match on change notes.
         - status: Exact match on release status.
     """
-    # Aliased User models for developer, tester, expert joins
+    # Aliased User models for developer, tester joins
     DeveloperUser = aliased(User)
     TesterUser = aliased(User)
-    ExpertUser = aliased(User)
 
     # Build the filter conditions
     conditions = []
@@ -95,15 +94,12 @@ async def search_releases(
             DeveloperUser.full_name.label("developer_name"),
             Version.tester_id.label("tester_id"),
             TesterUser.full_name.label("tester_name"),
-            Version.expert_id.label("expert_id"),
-            ExpertUser.full_name.label("expert_name"),
         )
         .select_from(Release)
         .join(Version, Release.version_id == Version.id)
         .join(Project, Version.project_id == Project.id)
         .outerjoin(DeveloperUser, Version.developer_id == DeveloperUser.id)
         .outerjoin(TesterUser, Version.tester_id == TesterUser.id)
-        .outerjoin(ExpertUser, Version.expert_id == ExpertUser.id)
     )
 
     if conditions:
@@ -117,7 +113,6 @@ async def search_releases(
         .join(Project, Version.project_id == Project.id)
         .outerjoin(DeveloperUser, Version.developer_id == DeveloperUser.id)
         .outerjoin(TesterUser, Version.tester_id == TesterUser.id)
-        .outerjoin(ExpertUser, Version.expert_id == ExpertUser.id)
     )
     if conditions:
         count_subquery = count_subquery.where(*conditions)
@@ -160,8 +155,6 @@ async def search_releases(
             developer_name=row.developer_name,
             tester_id=row.tester_id,
             tester_name=row.tester_name,
-            expert_id=row.expert_id,
-            expert_name=row.expert_name,
         )
         for row in rows
     ]
@@ -252,7 +245,6 @@ async def export_all(
     # --- Releases (all rows matching user's access; same logic as search_releases) ---
     DeveloperUser = aliased(User)
     TesterUser = aliased(User)
-    ExpertUser = aliased(User)
 
     rel_query = (
         select(
@@ -266,14 +258,12 @@ async def export_all(
             Version.version_number.label("version_number"),
             DeveloperUser.full_name.label("developer_name"),
             TesterUser.full_name.label("tester_name"),
-            ExpertUser.full_name.label("expert_name"),
         )
         .select_from(Release)
         .join(Version, Release.version_id == Version.id)
         .join(Project, Version.project_id == Project.id)
         .outerjoin(DeveloperUser, Version.developer_id == DeveloperUser.id)
         .outerjoin(TesterUser, Version.tester_id == TesterUser.id)
-        .outerjoin(ExpertUser, Version.expert_id == ExpertUser.id)
         # 排除软删除版本(P1-11)
         .where(Version.is_deleted == False)  # noqa: E712
     )
@@ -294,7 +284,7 @@ async def export_all(
     writer.writerow([
         "record_type", "id", "project_name", "version_number",
         "release_number", "status", "change_notes",
-        "developer_name", "tester_name", "expert_name",
+        "developer_name", "tester_name",
         "pm_name", "created_at", "updated_at", "latest_activity_at",
     ])
     for r in rel_rows:
@@ -308,7 +298,6 @@ async def export_all(
             r.change_notes or "",
             r.developer_name or "",
             r.tester_name or "",
-            r.expert_name or "",
             "",  # pm_name N/A for releases
             r.created_at.isoformat() if r.created_at else "",
             r.updated_at.isoformat() if r.updated_at else "",
@@ -323,7 +312,7 @@ async def export_all(
             "",  # release_number N/A
             "active" if p.is_active else "inactive",
             p.description or "",
-            "", "", "",  # developer/tester/expert N/A
+            "", "",  # developer/tester N/A
             getattr(p, "pm_name", "") or "",
             p.created_at.isoformat() if p.created_at else "",
             p.updated_at.isoformat() if p.updated_at else "",

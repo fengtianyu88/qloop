@@ -2,15 +2,16 @@
 
 This module is responsible for unpacking a submitted code package (a ZIP
 archive) and extracting a structured summary that can be fed to the LLM
-review engine. It supports a variety of file types commonly found in
-algorithm delivery packages:
+review engine. It supports the following file types inside the ZIP:
 
 * C source/header files (``.c`` / ``.h``)
-* Python files (``.py``)
 * MATLAB files (``.m``)
-* MAT data files (``.mat``) - parsed via :mod:`scipy.io`
-* Simulink models (``.slx``) - internally ZIP archives containing XML
-* PyTorch model files (``.pth``) - parsed via :mod:`torch` (optional)
+* Word documents (``.docx``) - parsed via python-docx
+* Excel spreadsheets (``.xlsx``) - parsed via openpyxl
+* Text files (``.txt``)
+* CSV files (``.csv``)
+
+Legacy binary formats (``.doc``, ``.xls``) are noted but not parsed.
 
 The main entry point is :func:`parse_code_package`, which returns a
 :class:`CodeSummary`. :func:`build_llm_input` turns a summary into a plain
@@ -27,8 +28,8 @@ import zipfile
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-# scipy is a hard dependency of the project (see requirements.txt).
-import scipy.io
+# Word/Excel parsing helpers (reused from doc_parser)
+from app.llm.doc_parser import parse_docx, parse_xlsx
 
 
 # ---------------------------------------------------------------------------
@@ -440,33 +441,35 @@ def parse_code_package(file_data: bytes) -> CodeSummary:
             funcs, structs = parse_c_file(text)
             summary.functions.extend(funcs)
             summary.structs.extend(structs)
-        elif ext == ".py":
-            text = _decode_text(data)
-            if text is None:
-                continue
-            summary.text_files[path] = text
-            funcs, classes = parse_python_file(text)
-            summary.functions.extend(funcs)
-            summary.classes.extend(classes)
         elif ext == ".m":
             text = _decode_text(data)
             if text is None:
                 continue
             summary.text_files[path] = text
             summary.functions.extend(parse_matlab_file(text))
-        elif ext == ".mat":
-            summary.mat_files_info.append(
-                parse_mat_file(data, basename or path)
+        elif ext == ".docx":
+            # Word 文档:通过 python-docx 提取文本
+            try:
+                doc_text = parse_docx(data)
+                if doc_text:
+                    summary.text_files[path] = doc_text
+            except Exception:
+                continue
+        elif ext == ".xlsx":
+            # Excel 文档:通过 openpyxl 提取文本
+            try:
+                sheet_text = parse_xlsx(data)
+                if sheet_text:
+                    summary.text_files[path] = sheet_text
+            except Exception:
+                continue
+        elif ext in (".doc", ".xls"):
+            # 旧版二进制格式,无法直接解析,记录提示信息
+            summary.text_files[path] = (
+                f"[旧版格式文件 {basename or path} 无法解析,"
+                f"请转换为 .docx/.xlsx 后重新上传]"
             )
-        elif ext == ".slx":
-            summary.simulink_info.append(
-                parse_simulink_file(data, basename or path)
-            )
-        elif ext == ".pth":
-            summary.pth_info.append(
-                parse_pth_file(data, basename or path)
-            )
-        elif ext in (".txt", ".md", ".rst", ".cfg", ".ini", ".yaml", ".yml", ".json"):
+        elif ext in (".txt", ".csv"):
             text = _decode_text(data)
             if text is not None:
                 summary.text_files[path] = text
@@ -562,18 +565,6 @@ def build_llm_input(
 
     sections.append("\n===== 结构体/联合体/枚举列表 =====")
     sections.append(_format_list(summary.structs))
-
-    sections.append("\n===== 类列表 (Python) =====")
-    sections.append(_format_list(summary.classes))
-
-    sections.append("\n===== MAT 文件信息 =====")
-    sections.append(_format_mat_info(summary.mat_files_info))
-
-    sections.append("\n===== Simulink 模型信息 =====")
-    sections.append(_format_simulink_info(summary.simulink_info))
-
-    sections.append("\n===== PyTorch 模型 (.pth) 信息 =====")
-    sections.append(_format_pth_info(summary.pth_info))
 
     sections.append("\n===== 变更点说明 =====")
     sections.append(change_notes.strip() if change_notes and change_notes.strip() else "(未提供)")

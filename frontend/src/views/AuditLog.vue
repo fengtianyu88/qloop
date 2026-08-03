@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { getAuditLogs } from '@/api/audit'
 import { getUsers } from '@/api/users'
+import { formatTime } from '@/utils/status'
 import type { AuditLog, AuditLogParams, User } from '@/types'
 
 const list = ref<AuditLog[]>([])
@@ -42,11 +43,6 @@ async function loadUsers() {
 function userName(id: string | null | undefined): string {
   if (!id) return '系统'
   return userMap.value[id]?.full_name || id.slice(0, 8) + '…'
-}
-
-function formatTime(t: string | null | undefined): string {
-  if (!t) return '—'
-  return t.replace('T', ' ').slice(0, 19)
 }
 
 function detailsText(d: Record<string, unknown> | null): string {

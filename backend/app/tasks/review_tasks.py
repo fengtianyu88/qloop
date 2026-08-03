@@ -100,7 +100,6 @@ async def _mark_pending_reviews_as_error(release_id: uuid.UUID, reason: str) -> 
 _REVIEW_TYPE_LABELS = {
     ReviewType.CODE_REVIEW: "代码",
     ReviewType.TEST_REPORT_REVIEW: "测试报告",
-    ReviewType.EXPERT_REPORT_REVIEW: "专家报告",
 }
 
 
@@ -130,11 +129,10 @@ async def _notify_after_review(
 
     if review.result == ReviewResult.PASSED:
         # 评审通过:通知下一角色
-        # CODE_REVIEW -> tester;TEST_REPORT_REVIEW -> expert;EXPERT_REPORT_REVIEW -> PM
+        # CODE_REVIEW -> tester;TEST_REPORT_REVIEW -> PM
         next_role_map = {
             ReviewType.CODE_REVIEW: ver.tester_id,
-            ReviewType.TEST_REPORT_REVIEW: ver.expert_id,
-            ReviewType.EXPERT_REPORT_REVIEW: pm_user_id,
+            ReviewType.TEST_REPORT_REVIEW: pm_user_id,
         }
         next_user_id = next_role_map.get(review_type)
         if next_user_id is not None:
@@ -233,17 +231,21 @@ def run_llm_review(
                     await _notify_after_review(db, review, rt)
                 except Exception:  # noqa: BLE001
                     logger.debug("评审后通知发送失败", exc_info=True)
+                # 在会话关闭前提取需要的值,避免 DetachedInstanceError
+                review_id_str = str(review.id)
+                review_result_str = review.result.value if review.result else "unknown"
+                review_score = float(review.total_score or 0.0)
             # 推送完成事件,前端据此切换到最终状态
             await _publish_event({
                 "type": "done",
-                "result": review.result.value if review.result else "unknown",
-                "review_id": str(review.id),
-                "total_score": float(review.total_score or 0.0),
+                "result": review_result_str,
+                "review_id": review_id_str,
+                "total_score": review_score,
             })
             return {
-                "review_id": str(review.id),
-                "result": review.result.value if review.result else "unknown",
-                "total_score": float(review.total_score or 0.0),
+                "review_id": review_id_str,
+                "result": review_result_str,
+                "total_score": review_score,
             }
         except Exception as exc:
             # 推送错误事件,前端 SSE 据此显示失败并关闭流

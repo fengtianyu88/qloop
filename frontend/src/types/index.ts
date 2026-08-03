@@ -80,6 +80,10 @@ export interface User {
   org_unit_id: string | null
   department: string | null
   section: string | null
+  // Git 推送凭据(仅返回用户名,不返回 token 原文)
+  git_username: string | null
+  // 是否已配置 Git token(后端 @property 推断)
+  has_git_token: boolean
   is_active: boolean
   created_at: string
   updated_at: string
@@ -153,6 +157,10 @@ export interface Project {
   pm_user_id: string
   /** 项目经理姓名（后端 join 后填充） */
   pm_name: string | null
+  /** 项目 Git 仓库地址（由项目经理设置,用于释放后推送交付物） */
+  git_repo_url: string | null
+  /** 项目 Git 分支 */
+  git_branch: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -165,6 +173,12 @@ export interface Project {
 export interface ProjectCreate {
   name: string
   description?: string
+}
+
+/** 更新项目 Git 配置请求 */
+export interface ProjectGitConfig {
+  git_repo_url?: string | null
+  git_branch?: string | null
 }
 
 /** 版本 */

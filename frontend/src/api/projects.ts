@@ -5,6 +5,7 @@ import request from './request'
 import type {
   Project,
   ProjectCreate,
+  ProjectGitConfig,
   ProjectMember,
   ProjectMemberCreate,
   ProjectMemberUpdate,
@@ -25,6 +26,14 @@ export function createProject(data: ProjectCreate): Promise<Project> {
 /** 获取项目详情 */
 export function getProject(id: string): Promise<Project> {
   return request.get(`/projects/${id}`)
+}
+
+/** 更新项目 Git 仓库配置（PM/admin） */
+export function updateProjectGitConfig(
+  projectId: string,
+  data: ProjectGitConfig,
+): Promise<Project> {
+  return request.put(`/projects/${projectId}/git-config`, data)
 }
 
 /** 添加项目成员（PM/admin） */

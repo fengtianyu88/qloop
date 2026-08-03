@@ -106,3 +106,22 @@ export function getExternalDownloadLinks(
 ): Promise<ExternalRecipientLink[]> {
   return request.get(`/releases/${releaseId}/external-download-links`)
 }
+
+/** 推送释放交付物到项目 Git 仓库(功能3.6)
+ *
+ * 使用当前登录用户(项目经理)的 Git 账号凭据,推送到项目配置的 Git 仓库分支。
+ * 前置条件:release 状态必须为 released / released_forced;
+ *          项目必须已配置 git_repo_url;当前用户必须已配置 git_username + git_token。
+ */
+export interface GitPushResult {
+  message: string
+  commit_sha: string | null
+  pushed_files: string[]
+  repo_url: string
+  branch: string
+  skipped_commit?: boolean
+}
+
+export function pushReleaseToGit(releaseId: string): Promise<GitPushResult> {
+  return request.post(`/releases/${releaseId}/push-git`)
+}

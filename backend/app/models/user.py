@@ -54,6 +54,9 @@ class User(Base):
     )
     department: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     section: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    # Git 推送凭据(用于版本释放后推送交付物到项目 Git 仓库)
+    git_username: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    git_token: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
     )
@@ -66,6 +69,13 @@ class User(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+    # 计算@property:是否已配置 Git token(用于 UserResponse.has_git_token)
+    # Pydantic 的 from_attributes 会读取该属性,无需在数据库中存储。
+    @property
+    def has_git_token(self) -> bool:
+        """返回当前用户是否已配置 Git token(不暴露 token 原文)。"""
+        return bool(self.git_token)
 
     # Relationships
     org_unit = relationship("OrgUnit", back_populates="users")

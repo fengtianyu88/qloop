@@ -50,8 +50,7 @@ logger = logging.getLogger(__name__)
 # Mapping of (review_type -> status when the review passes).
 _PASS_STATUS_TRANSITIONS = {
     ReviewType.CODE_REVIEW: ReleaseStatus.TEST_PENDING_REVIEW,
-    ReviewType.TEST_REPORT_REVIEW: ReleaseStatus.EXPERT_PENDING_REVIEW,
-    ReviewType.EXPERT_REPORT_REVIEW: ReleaseStatus.PENDING_CONFIRM,
+    ReviewType.TEST_REPORT_REVIEW: ReleaseStatus.PENDING_CONFIRM,
 }
 
 
@@ -161,16 +160,6 @@ async def _prepare_review_content(
         file_data = minio_download_file(release.test_report_path)
         return parse_document(
             file_data, _basename_from_path(release.test_report_path)
-        )
-
-    if review_type == ReviewType.EXPERT_REPORT_REVIEW:
-        if not release.review_report_path:
-            raise ValueError(
-                "Expert review report has not been uploaded for this release"
-            )
-        file_data = minio_download_file(release.review_report_path)
-        return parse_document(
-            file_data, _basename_from_path(release.review_report_path)
         )
 
     raise ValueError(f"Unknown review type: {review_type}")

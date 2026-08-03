@@ -3,7 +3,7 @@
 import asyncio
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -112,8 +112,8 @@ async def stream_notifications(
     认证通过 query 参数 ?token=xxx 传递(EventSource 不支持自定义 header)。
     """
     async def event_generator():
-        # 用 naive UTC 时间戳比较(数据库字段为 timezone-aware,需统一)
-        last_check = datetime.utcnow()
+        # 使用 timezone-aware UTC 时间戳,与数据库字段(timezone=True)保持一致
+        last_check = datetime.now(timezone.utc)
         while True:
             try:
                 result = await db.execute(

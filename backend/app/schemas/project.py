@@ -43,6 +43,17 @@ class ProjectCreate(BaseModel):
     description: Optional[str] = None
 
 
+class ProjectGitConfigRequest(BaseModel):
+    """Schema for updating a project's Git repository configuration.
+
+    仅项目经理(PM)/admin/super_admin 可修改,用于版本释放后推送交付物。
+    传入空字符串会清除对应字段。
+    """
+
+    git_repo_url: Optional[str] = None
+    git_branch: Optional[str] = None
+
+
 class ProjectResponse(BaseModel):
     """Schema for project responses."""
 
@@ -53,6 +64,9 @@ class ProjectResponse(BaseModel):
     description: Optional[str] = None
     pm_user_id: uuid.UUID
     pm_name: Optional[str] = None
+    # 项目 Git 仓库配置(由项目经理设置,用于释放后推送交付物)
+    git_repo_url: Optional[str] = None
+    git_branch: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -67,7 +81,6 @@ class VersionCreate(BaseModel):
     description: Optional[str] = None
     developer_id: Optional[uuid.UUID] = None
     tester_id: Optional[uuid.UUID] = None
-    expert_id: Optional[uuid.UUID] = None
 
 
 class VersionResponse(BaseModel):
@@ -81,7 +94,6 @@ class VersionResponse(BaseModel):
     description: Optional[str] = None
     developer_id: Optional[uuid.UUID] = None
     tester_id: Optional[uuid.UUID] = None
-    expert_id: Optional[uuid.UUID] = None
     created_at: datetime
     updated_at: datetime
 
@@ -206,5 +218,3 @@ class ReleaseListResponse(BaseModel):
     developer_name: Optional[str] = None
     tester_id: Optional[uuid.UUID] = None
     tester_name: Optional[str] = None
-    expert_id: Optional[uuid.UUID] = None
-    expert_name: Optional[str] = None
