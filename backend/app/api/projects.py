@@ -122,8 +122,6 @@ async def update_project_git_config(
     is_pm = await check_pm_permission(db, current_user, project_id)
     is_admin = current_user.system_role in (
         SystemRole.ADMIN, SystemRole.SUPER_ADMIN,
-    ) or getattr(current_user.system_role, "value", None) in (
-        "admin", "super_admin",
     )
     if not (is_pm or is_admin):
         raise HTTPException(
@@ -307,11 +305,7 @@ async def update_member(
 
     # PM cannot modify the PM row; only admin/super_admin can.
     is_admin = current_user.system_role in (
-        "admin",
-        "super_admin",
-    ) or getattr(current_user.system_role, "value", None) in (
-        "admin",
-        "super_admin",
+        SystemRole.ADMIN, SystemRole.SUPER_ADMIN,
     )
     if member.user_id == project.pm_user_id and not is_admin:
         raise HTTPException(
@@ -397,11 +391,7 @@ async def remove_member(
 
     # PM cannot remove the PM row; only admin/super_admin can.
     is_admin = current_user.system_role in (
-        "admin",
-        "super_admin",
-    ) or getattr(current_user.system_role, "value", None) in (
-        "admin",
-        "super_admin",
+        SystemRole.ADMIN, SystemRole.SUPER_ADMIN,
     )
     if member.user_id == project.pm_user_id and not is_admin:
         raise HTTPException(

@@ -43,7 +43,11 @@ class Notification(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     type: Mapped[NotificationType] = mapped_column(
-        SAEnum(NotificationType, name="notification_type"),
+        SAEnum(
+            NotificationType,
+            name="notification_type",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
     )
     title: Mapped[str] = mapped_column(String(200), nullable=False)

@@ -99,7 +99,11 @@ class ProjectMember(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     project_role: Mapped[ProjectRole] = mapped_column(
-        SAEnum(ProjectRole, name="project_role"),
+        SAEnum(
+            ProjectRole,
+            name="project_role",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
         default=ProjectRole.DEVELOPER,
     )
@@ -185,7 +189,11 @@ class Release(Base):
     )
     release_number: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[ReleaseStatus] = mapped_column(
-        SAEnum(ReleaseStatus, name="release_status"),
+        SAEnum(
+            ReleaseStatus,
+            name="release_status",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
         default=ReleaseStatus.DRAFT,
     )

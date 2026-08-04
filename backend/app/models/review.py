@@ -102,7 +102,11 @@ class ReviewRule(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     review_type: Mapped[ReviewType] = mapped_column(
-        SAEnum(ReviewType, name="review_type"),
+        SAEnum(
+            ReviewType,
+            name="review_type",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         unique=True,
         nullable=False,
     )
@@ -148,14 +152,22 @@ class LLMReview(Base):
         UUID(as_uuid=True), ForeignKey("releases.id"), nullable=False
     )
     review_type: Mapped[ReviewType] = mapped_column(
-        SAEnum(ReviewType, name="llm_review_type"),
+        SAEnum(
+            ReviewType,
+            name="llm_review_type",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
     )
     review_round: Mapped[int] = mapped_column(
         Integer, default=1, nullable=False
     )
     result: Mapped[ReviewResult] = mapped_column(
-        SAEnum(ReviewResult, name="review_result"),
+        SAEnum(
+            ReviewResult,
+            name="review_result",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
         default=ReviewResult.PENDING,
     )

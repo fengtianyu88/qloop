@@ -45,7 +45,11 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     system_role: Mapped[SystemRole] = mapped_column(
-        SAEnum(SystemRole, name="system_role"),
+        SAEnum(
+            SystemRole,
+            name="system_role",
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
         default=SystemRole.GUEST,
     )
